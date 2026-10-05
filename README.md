@@ -1,3 +1,5 @@
+<img src="docs/images/icon.png" alt="Boiler Monitor icon" width="96" align="right">
+
 # Boiler Monitoring for Home Assistant
 
 [![HACS Custom](https://img.shields.io/badge/HACS-Custom-41BDF5.svg)](https://hacs.xyz/docs/faq/custom_repositories)

@@ -10,7 +10,7 @@
  *   show_daily: true
  *   show_correlation: true
  */
-const CARD_VERSION = "1.0.1";
+const CARD_VERSION = "1.0.2";
 
 const I18N = {
   en: {
