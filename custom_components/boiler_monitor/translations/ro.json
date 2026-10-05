@@ -7,40 +7,47 @@
         "data": {
           "name": "Nume",
           "burner_entity": "Entitate arzător / cerere de căldură",
-          "burner_on_state": "Starea care înseamnă „arzător pornit”",
-          "flow_temp_entity": "Senzor temperatură tur",
-          "return_temp_entity": "Senzor temperatură retur",
-          "outdoor_temp_entity": "Senzor temperatură exterioară",
-          "indoor_temp_entities": "Senzori temperatură interioară",
-          "season_entity": "Entitate sezon de încălzire (opțional)",
-          "season_state": "Starea care înseamnă „sezon de încălzire activ”"
+          "burner_on_state": "Starea care înseamnă „arzător pornit” (text)",
+          "flow_temp_entity": "Senzor temperatură tur (°C) – opțional",
+          "return_temp_entity": "Senzor temperatură retur (°C) – opțional",
+          "outdoor_temp_entity": "Senzor temperatură exterioară (°C) – opțional",
+          "indoor_temp_entities": "Senzori temperatură interioară (°C) – opțional",
+          "season_entity": "Entitate sezon de încălzire – opțional",
+          "season_state": "Starea care înseamnă „sezon de încălzire activ” (text)"
         },
         "data_description": {
-          "burner_entity": "binary_sensor / switch / input_boolean (releu sau flacără), climate (folosește hvac_action) sau un senzor text.",
-          "burner_on_state": "De obicei „on”. Pentru climate: valoarea hvac_action, ex. „heating”. Pentru senzor text: starea exactă.",
-          "season_entity": "Dacă e setată, monitorizarea se oprește cât timp entitatea nu e în starea de mai jos. Lasă gol pentru monitorizare permanentă.",
-          "season_state": "ex. „on”, „heat” sau textul opțiunii dintr-un input_select.",
-          "indoor_temp_entities": "Se folosește media senzorilor disponibili pentru verificarea efectului termic."
+          "name": "Un nume pentru această centrală. Se folosește pentru dispozitiv și pentru ID-urile entităților, ex. „Centrala” creează sensor.centrala_status.",
+          "burner_entity": "Entitatea care e PORNITĂ cât timp arde arzătorul (sau cât timp există cerere de căldură): un switch (ex. releul ESPHome care comandă centrala), un binary_sensor (flacără), un input_boolean, o entitate climate (se folosește hvac_action) sau un senzor cu stare text.",
+          "burner_on_state": "Starea exactă care înseamnă „arzător pornit”: „on” pentru switch / binary_sensor / input_boolean, „heating” pentru climate, sau textul exact al stării unui senzor.",
+          "flow_temp_entity": "Temperatura apei calde care iese din centrală spre calorifere, în °C. Necesar pentru ΔT tur-retur.",
+          "return_temp_entity": "Temperatura apei care se întoarce de la calorifere în centrală, în °C. Necesar pentru procentul de condensare și alerta „Condensare pierdută”.",
+          "outdoor_temp_entity": "Temperatura aerului de afară, în °C. Necesar pentru corelarea cu exteriorul, punctul de echilibru și orele de ardere pe grad-zi.",
+          "indoor_temp_entities": "Unul sau mai mulți senzori de cameră, în °C. Media lor (senzorii indisponibili sunt ignorați) arată dacă încălzirea chiar încălzește casa.",
+          "season_entity": "Opțional. Cât timp această entitate NU e în starea de mai jos, monitorizarea e pe pauză (nu se numără cicluri, nu se trimit alerte) – util vara, când centrala face doar apă caldă. Lasă gol pentru monitorizare tot anul.",
+          "season_state": "Starea entității de sezon care înseamnă „sezon de încălzire activ”, ex. „on” (input_boolean / switch), „heat” (climate) sau textul exact al opțiunii unui input_select. Ignorat dacă nu e aleasă o entitate de sezon."
         }
       },
       "reconfigure": {
         "title": "Monitorizare centrală",
         "data": {
           "burner_entity": "Entitate arzător / cerere de căldură",
-          "burner_on_state": "Starea care înseamnă „arzător pornit”",
-          "flow_temp_entity": "Senzor temperatură tur",
-          "return_temp_entity": "Senzor temperatură retur",
-          "outdoor_temp_entity": "Senzor temperatură exterioară",
-          "indoor_temp_entities": "Senzori temperatură interioară",
-          "season_entity": "Entitate sezon de încălzire (opțional)",
-          "season_state": "Starea care înseamnă „sezon de încălzire activ”"
+          "burner_on_state": "Starea care înseamnă „arzător pornit” (text)",
+          "flow_temp_entity": "Senzor temperatură tur (°C) – opțional",
+          "return_temp_entity": "Senzor temperatură retur (°C) – opțional",
+          "outdoor_temp_entity": "Senzor temperatură exterioară (°C) – opțional",
+          "indoor_temp_entities": "Senzori temperatură interioară (°C) – opțional",
+          "season_entity": "Entitate sezon de încălzire – opțional",
+          "season_state": "Starea care înseamnă „sezon de încălzire activ” (text)"
         },
         "data_description": {
-          "burner_entity": "binary_sensor / switch / input_boolean (releu sau flacără), climate (folosește hvac_action) sau un senzor text.",
-          "burner_on_state": "De obicei „on”. Pentru climate: valoarea hvac_action, ex. „heating”. Pentru senzor text: starea exactă.",
-          "season_entity": "Dacă e setată, monitorizarea se oprește cât timp entitatea nu e în starea de mai jos. Lasă gol pentru monitorizare permanentă.",
-          "season_state": "ex. „on”, „heat” sau textul opțiunii dintr-un input_select.",
-          "indoor_temp_entities": "Se folosește media senzorilor disponibili pentru verificarea efectului termic."
+          "burner_entity": "Entitatea care e PORNITĂ cât timp arde arzătorul (sau cât timp există cerere de căldură): un switch (ex. releul ESPHome care comandă centrala), un binary_sensor (flacără), un input_boolean, o entitate climate (se folosește hvac_action) sau un senzor cu stare text.",
+          "burner_on_state": "Starea exactă care înseamnă „arzător pornit”: „on” pentru switch / binary_sensor / input_boolean, „heating” pentru climate, sau textul exact al stării unui senzor.",
+          "flow_temp_entity": "Temperatura apei calde care iese din centrală spre calorifere, în °C. Necesar pentru ΔT tur-retur.",
+          "return_temp_entity": "Temperatura apei care se întoarce de la calorifere în centrală, în °C. Necesar pentru procentul de condensare și alerta „Condensare pierdută”.",
+          "outdoor_temp_entity": "Temperatura aerului de afară, în °C. Necesar pentru corelarea cu exteriorul, punctul de echilibru și orele de ardere pe grad-zi.",
+          "indoor_temp_entities": "Unul sau mai mulți senzori de cameră, în °C. Media lor (senzorii indisponibili sunt ignorați) arată dacă încălzirea chiar încălzește casa.",
+          "season_entity": "Opțional. Cât timp această entitate NU e în starea de mai jos, monitorizarea e pe pauză (nu se numără cicluri, nu se trimit alerte) – util vara, când centrala face doar apă caldă. Lasă gol pentru monitorizare tot anul.",
+          "season_state": "Starea entității de sezon care înseamnă „sezon de încălzire activ”, ex. „on” (input_boolean / switch), „heat” (climate) sau textul exact al opțiunii unui input_select. Ignorat dacă nu e aleasă o entitate de sezon."
         }
       }
     },
@@ -54,19 +61,24 @@
       "init": {
         "title": "Reglaje și alerte",
         "data": {
-          "short_cycle_minutes": "Prag short-cycling (pauză minimă)",
-          "return_threshold": "Prag temperatură retur (condensare)",
-          "return_hot_minutes": "Minute peste prag până la alertă",
-          "effect_check_minutes": "Întârziere verificare efect termic",
-          "min_temp_rise": "Creștere minimă așteptată în camere",
-          "min_burn_seconds": "Ignoră arderile mai scurte de",
-          "notify_service": "Serviciu de notificare",
-          "csv_log": "Scrie jurnal CSV"
+          "short_cycle_minutes": "Prag short-cycling (minute)",
+          "return_threshold": "Prag temperatură retur (°C)",
+          "return_hot_minutes": "Retur prea cald timp de (minute)",
+          "effect_check_minutes": "Întârziere verificare efect termic (minute)",
+          "min_temp_rise": "Creștere minimă așteptată în camere (°C)",
+          "min_burn_seconds": "Ignoră arderile mai scurte de (secunde)",
+          "notify_service": "Serviciu de notificare (text) – opțional",
+          "csv_log": "Scrie jurnal CSV (pornit/oprit)"
         },
         "data_description": {
-          "notify_service": "ex. notify.mobile_app_telefon (sau o entitate notify). Gol = fără notificări push (evenimentele și binary sensor-ii funcționează în continuare).",
-          "min_burn_seconds": "Impulsurile de releu mai scurte de atât sunt ignorate.",
-          "csv_log": "Adaugă evenimentele în /config/boiler_monitor/ (câte un fișier CSV pentru fiecare centrală)"
+          "short_cycle_minutes": "În minute. Dacă arzătorul repornește mai repede de atât după ce s-a oprit, pornirea e numărată ca short-cycle și se dă alertă. Implicit 10 min.",
+          "return_threshold": "În °C. Peste această temperatură a returului, o centrală în condensare nu mai condensează și pierde din randament (≈ 55 °C la gaz natural). Implicit 53 °C.",
+          "return_hot_minutes": "În minute. Cât timp trebuie să stea returul peste prag, cu arzătorul pornit, până apare alerta „Condensare pierdută”. Vârfurile scurte sunt ignorate. Implicit 15 min.",
+          "effect_check_minutes": "În minute. După cât timp de la pornirea arzătorului se verifică din nou temperatura din camere. 30–45 pentru calorifere, 90–120 pentru încălzire în pardoseală. Implicit 45 min.",
+          "min_temp_rise": "În °C. Dacă media camerelor a crescut mai puțin de atât până la verificare, apare „Încălzire ineficientă” (ex. aer în calorifere, robineți închiși, tur prea rece). Implicit 0,2 °C.",
+          "min_burn_seconds": "În secunde. Arderile mai scurte de atât sunt considerate impulsuri false de releu sau aprinderi ratate și sunt eliminate complet din statistici. Implicit 20 s.",
+          "notify_service": "Unde se trimit alertele push, ex. notify.mobile_app_telefon (sau o entitate notify). Gol = fără notificări push – evenimentele și binary sensor-ii funcționează oricum. Maxim o alertă pe oră pentru fiecare tip.",
+          "csv_log": "Când e pornit, fiecare eveniment START / STOP / SHORT_CYCLE / RETURN_HOT / INEFFECTIVE e adăugat într-un fișier CSV în /config/boiler_monitor/ (câte un fișier pentru fiecare centrală)."
         }
       }
     }
