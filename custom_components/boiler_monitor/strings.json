@@ -1,0 +1,152 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Boiler Monitor",
+        "description": "Choose the entity that tells when the burner is firing, plus the optional temperature sensors. Every sensor except the burner is optional; features that need a missing sensor are simply not created.",
+        "data": {
+          "name": "Name",
+          "burner_entity": "Burner / heat-demand entity",
+          "burner_on_state": "State meaning 'burner on'",
+          "flow_temp_entity": "Flow temperature sensor",
+          "return_temp_entity": "Return temperature sensor",
+          "outdoor_temp_entity": "Outdoor temperature sensor",
+          "indoor_temp_entities": "Indoor temperature sensors",
+          "season_entity": "Heating-season entity (optional)",
+          "season_state": "State meaning 'heating season active'"
+        },
+        "data_description": {
+          "burner_entity": "binary_sensor / switch / input_boolean (relay or flame), climate (uses hvac_action), or a text sensor.",
+          "burner_on_state": "Usually 'on'. For a climate entity: the hvac_action value, e.g. 'heating'. For a text sensor: its exact state.",
+          "season_entity": "If set, monitoring pauses while this entity is not in the state below. Leave empty to monitor always.",
+          "season_state": "e.g. 'on', 'heat', or the option text of an input_select.",
+          "indoor_temp_entities": "Average of the available sensors is used for the heating-effect check."
+        }
+      },
+      "reconfigure": {
+        "title": "Boiler Monitor",
+        "data": {
+          "burner_entity": "Burner / heat-demand entity",
+          "burner_on_state": "State meaning 'burner on'",
+          "flow_temp_entity": "Flow temperature sensor",
+          "return_temp_entity": "Return temperature sensor",
+          "outdoor_temp_entity": "Outdoor temperature sensor",
+          "indoor_temp_entities": "Indoor temperature sensors",
+          "season_entity": "Heating-season entity (optional)",
+          "season_state": "State meaning 'heating season active'"
+        },
+        "data_description": {
+          "burner_entity": "binary_sensor / switch / input_boolean (relay or flame), climate (uses hvac_action), or a text sensor.",
+          "burner_on_state": "Usually 'on'. For a climate entity: the hvac_action value, e.g. 'heating'. For a text sensor: its exact state.",
+          "season_entity": "If set, monitoring pauses while this entity is not in the state below. Leave empty to monitor always.",
+          "season_state": "e.g. 'on', 'heat', or the option text of an input_select.",
+          "indoor_temp_entities": "Average of the available sensors is used for the heating-effect check."
+        }
+      }
+    },
+    "abort": {
+      "already_configured": "This burner entity is already monitored.",
+      "reconfigure_successful": "Reconfigured."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Tuning & alerts",
+        "data": {
+          "short_cycle_minutes": "Short-cycle threshold (min off-time)",
+          "return_threshold": "Return temperature threshold (condensation)",
+          "return_hot_minutes": "Minutes above threshold before alert",
+          "effect_check_minutes": "Heating-effect check delay",
+          "min_temp_rise": "Minimum expected room temperature rise",
+          "min_burn_seconds": "Ignore burns shorter than",
+          "notify_service": "Notification service",
+          "csv_log": "Write CSV log"
+        },
+        "data_description": {
+          "notify_service": "e.g. notify.mobile_app_my_phone (or a notify entity). Empty = no push alerts (events and binary sensors still work).",
+          "min_burn_seconds": "Relay glitches shorter than this are discarded.",
+          "csv_log": "Appends events to /config/boiler_monitor/<name>.csv"
+        }
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "status": {
+        "name": "Status",
+        "state": {
+          "heating": "Heating",
+          "idle": "Idle",
+          "off_season": "Off season",
+          "unavailable": "Unavailable"
+        }
+      },
+      "cycles_today": {
+        "name": "Cycles today"
+      },
+      "short_cycles_today": {
+        "name": "Short cycles today"
+      },
+      "cycles_per_hour": {
+        "name": "Cycles per hour (24h)"
+      },
+      "avg_burn": {
+        "name": "Average burn time (24h)"
+      },
+      "avg_off": {
+        "name": "Average off time (24h)"
+      },
+      "last_burn": {
+        "name": "Last burn duration"
+      },
+      "duty_cycle": {
+        "name": "Duty cycle (24h)"
+      },
+      "burn_time_today": {
+        "name": "Burn time today"
+      },
+      "condensing_ratio": {
+        "name": "Condensing ratio (24h)"
+      },
+      "delta_t": {
+        "name": "Flow-return ΔT"
+      },
+      "heating_rate": {
+        "name": "Heating rate"
+      },
+      "balance_point": {
+        "name": "Balance point"
+      },
+      "burn_per_hdd": {
+        "name": "Burn hours per degree-day (7d)"
+      }
+    },
+    "binary_sensor": {
+      "burner": {
+        "name": "Burner"
+      },
+      "short_cycling": {
+        "name": "Short-cycling"
+      },
+      "condensation_lost": {
+        "name": "Condensation lost"
+      },
+      "heating_ineffective": {
+        "name": "Heating ineffective"
+      }
+    }
+  },
+  "services": {
+    "reset_statistics": {
+      "name": "Reset statistics",
+      "description": "Clears stored cycles and statistics.",
+      "fields": {
+        "entry_id": {
+          "name": "Entry ID",
+          "description": "Limit to these config entries (empty = all)."
+        }
+      }
+    }
+  }
+}

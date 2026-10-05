@@ -1,0 +1,18 @@
+{
+  "domain": "boiler_monitor",
+  "name": "Boiler Monitor",
+  "after_dependencies": [
+    "http",
+    "frontend"
+  ],
+  "codeowners": [
+    "@sandreialexandru"
+  ],
+  "config_flow": true,
+  "documentation": "https://github.com/sandreialexandru/Boiler-Monitoring-for-Home-Assistant",
+  "integration_type": "service",
+  "iot_class": "calculated",
+  "issue_tracker": "https://github.com/sandreialexandru/Boiler-Monitoring-for-Home-Assistant/issues",
+  "requirements": [],
+  "version": "1.0.0"
+}

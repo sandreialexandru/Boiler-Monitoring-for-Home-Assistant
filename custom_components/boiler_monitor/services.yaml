@@ -1,0 +1,7 @@
+reset_statistics:
+  fields:
+    entry_id:
+      required: false
+      selector:
+        config_entry:
+          integration: boiler_monitor
