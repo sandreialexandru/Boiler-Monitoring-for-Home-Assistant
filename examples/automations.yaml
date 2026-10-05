@@ -1,0 +1,47 @@
+# Example automations built on Boiler Monitor events.
+
+# 1. Actionable alert with a link to the dashboard when short-cycling starts
+- alias: "Boiler – short-cycling alert"
+  triggers:
+    - trigger: event
+      event_type: boiler_monitor_short_cycle
+  actions:
+    - action: notify.mobile_app_my_phone
+      data:
+        title: "Boiler short-cycling"
+        message: >
+          {{ trigger.event.data.name }} restarted after
+          {{ trigger.event.data.off_minutes }} min off.
+        data:
+          tag: boiler_short_cycle
+          clickAction: /dashboard-boiler/boiler
+
+# 2. Log every finished cycle to the logbook
+- alias: "Boiler – log cycle"
+  triggers:
+    - trigger: event
+      event_type: boiler_monitor_cycle_end
+  actions:
+    - action: logbook.log
+      data:
+        name: "{{ trigger.event.data.name }}"
+        message: >
+          burned {{ trigger.event.data.burn_minutes }} min
+          (off before: {{ trigger.event.data.off_minutes_before }} min,
+          outdoor {{ trigger.event.data.outdoor }}°C)
+          {{ '– SHORT CYCLE' if trigger.event.data.short_cycle }}
+
+# 3. Daily summary at 22:00
+- alias: "Boiler – daily summary"
+  triggers:
+    - trigger: time
+      at: "22:00:00"
+  actions:
+    - action: notify.mobile_app_my_phone
+      data:
+        title: "Boiler today"
+        message: >
+          {{ states('sensor.centrala_cycles_today') }} cycles
+          ({{ states('sensor.centrala_short_cycles_today') }} short),
+          {{ states('sensor.centrala_burn_time_today') }} h burning,
+          condensing {{ states('sensor.centrala_condensing_ratio_24h') }}%.

@@ -1,0 +1,43 @@
+# Full dashboard view for Boiler Monitor
+# Replace "centrala" with the slug of the name you gave the integration.
+title: Boiler
+path: boiler
+icon: mdi:water-boiler
+type: sections
+max_columns: 2
+sections:
+  - type: grid
+    cards:
+      - type: custom:boiler-monitor-card
+        entity: sensor.centrala_status
+        mode: full
+        grid_options:
+          columns: full
+  - type: grid
+    cards:
+      - type: tile
+        entity: binary_sensor.centrala_short_cycling
+      - type: tile
+        entity: binary_sensor.centrala_condensation_lost
+      - type: tile
+        entity: binary_sensor.centrala_heating_ineffective
+      - type: tile
+        entity: sensor.centrala_burn_hours_per_degree_day_7d
+      - type: history-graph
+        title: Flow / return
+        hours_to_show: 24
+        grid_options:
+          columns: full
+        entities:
+          - entity: sensor.tur      # your flow sensor
+          - entity: sensor.retur    # your return sensor
+      - type: statistics-graph
+        title: Burn time per day
+        chart_type: bar
+        period: day
+        stat_types: [change]
+        days_to_show: 30
+        grid_options:
+          columns: full
+        entities:
+          - sensor.centrala_burn_time_today
