@@ -369,3 +369,27 @@ async def test_dump_card_fixture(hass: HomeAssistant, freezer):
     attrs = dict(s.attributes)
     attrs["friendly_name"] = "Centrala Status"
     open(out, "w").write(json.dumps({"state": s.state, "attributes": attrs, "now": dt_util.utcnow().timestamp()}, default=str))
+
+
+async def test_condensing_at_threshold(hass: HomeAssistant, freezer):
+    """Return exactly at the threshold still counts as condensing."""
+    freezer.move_to("2026-11-10 08:00:00+02:00")
+    temps(hass, ret=44.0)
+    await burner(hass, False)
+    await setup(hass, options={**OPTIONS, "return_threshold": 45, "notify_service": ""})
+    await burner(hass, True)
+    await advance(hass, freezer, 10)
+    temps(hass, ret=45.0)
+    await hass.async_block_till_done()
+    await advance(hass, freezer, 10)
+    s = st(hass, "sensor.centrala_condensing_ratio_24h")
+    assert float(s.state) == 100
+    assert s.attributes["return_threshold"] == 45
+    assert s.attributes["return_max_while_burning_24h"] == 45.0
+    assert s.attributes["burning_minutes_sampled_24h"] == 20
+    temps(hass, ret=45.5)
+    await hass.async_block_till_done()
+    await advance(hass, freezer, 5)
+    s = st(hass, "sensor.centrala_condensing_ratio_24h")
+    assert float(s.state) == 80
+    assert s.attributes["condensing_minutes_24h"] == 20

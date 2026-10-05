@@ -88,6 +88,18 @@ class BoilerStatSensor(BoilerEntity, SensorEntity):
     def native_value(self) -> Any:
         return self.monitor.stats().get(self.entity_description.stat)
 
+    @property
+    def extra_state_attributes(self) -> dict[str, Any] | None:
+        if self.entity_description.key != "condensing_ratio":
+            return None
+        s = self.monitor.stats()
+        return {
+            "return_threshold": self.monitor.return_threshold,
+            "condensing_minutes_24h": s.get("condensing_minutes"),
+            "burning_minutes_sampled_24h": s.get("burning_sampled_minutes"),
+            "return_max_while_burning_24h": s.get("return_max_24h"),
+        }
+
 
 class BoilerStatusSensor(BoilerEntity, SensorEntity):
     """Main entity: status + everything the card needs as attributes."""

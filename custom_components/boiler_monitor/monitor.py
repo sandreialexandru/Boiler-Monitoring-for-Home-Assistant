@@ -100,7 +100,7 @@ def _new_bucket() -> dict[str, float]:
         "burn_s": 0.0,  # seconds burner on
         "cycles": 0,  # completed cycles (attributed to start hour)
         "short": 0,  # short cycles
-        "cond_s": 0.0,  # sampled seconds burning with return < threshold
+        "cond_s": 0.0,  # sampled seconds burning with return <= threshold
         "smp_s": 0.0,  # sampled seconds burning with a valid return reading
         "out_sum": 0.0,
         "out_n": 0,
@@ -552,9 +552,11 @@ class BoilerMonitor:
         if self.burner_on and self._open_cycle() is not None:
             ret = self.return_temp()
             if ret is not None:
-                b["smp_s"] += dt
-                if ret < self.return_threshold:
-                    b["cond_s"] += dt
+                b["smp_s"] = b.get("smp_s", 0.0) + dt
+                if ret <= self.return_threshold:
+                    b["cond_s"] = b.get("cond_s", 0.0) + dt
+                # Highest return seen while burning (diagnostics; max, not sum)
+                b["ret_max"] = max(b.get("ret_max", ret), ret)
             d = self.delta_t()
             if d is not None:
                 b["dt_sum"] += d
@@ -587,7 +589,11 @@ class BoilerMonitor:
         return [c for c in self.cycles if c["start"] >= now - seconds]
 
     def _sum_hours(self, start: float, end: float, field: str) -> float:
-        return sum(v[field] for k, v in self.hours.items() if start <= k < end)
+        return sum(v.get(field, 0) for k, v in self.hours.items() if start <= k < end)
+
+    def _max_hours(self, start: float, end: float, field: str) -> float | None:
+        vals = [v[field] for k, v in self.hours.items() if start <= k < end and field in v]
+        return max(vals) if vals else None
 
     def stats(self) -> dict[str, Any]:
         """All derived statistics (cached until the next update signal)."""
@@ -632,6 +638,9 @@ class BoilerMonitor:
             "last_burn_min": _r((last["end"] - last["start"]) / 60) if last else None,
             "current_burn_min": _r((now - open_c["start"]) / 60) if open_c else None,
             "condensing_ratio": _r(100 * cond / smp) if smp >= 300 else None,
+            "condensing_minutes": round(cond / 60),
+            "burning_sampled_minutes": round(smp / 60),
+            "return_max_24h": _r(self._max_hours(h_start, now + 1, "ret_max")),
             "delta_t": _r(self.delta_t()),
             "heating_rate": self.last_heating_rate,
             "balance_point": reg.get("balance_point") if reg else None,
@@ -652,8 +661,8 @@ class BoilerMonitor:
         for k, v in self.hours.items():
             d = dt_util.as_local(dt_util.utc_from_timestamp(k)).date().isoformat()
             a = agg.setdefault(d, _new_bucket())
-            for f in a:
-                a[f] += v[f]
+            for f in _new_bucket():
+                a[f] += v.get(f, 0)
         out = []
         for d in sorted(agg)[-days:]:
             a = agg[d]
