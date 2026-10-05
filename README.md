@@ -282,6 +282,17 @@ The tests run the integration inside a real Home Assistant core with a simulated
 
 The card is plain JavaScript (no build step) in `custom_components/boiler_monitor/frontend/boiler-monitor-card.js`.
 
+### Releasing a new version
+
+Releases are published automatically by [`.github/workflows/release.yml`](.github/workflows/release.yml):
+
+1. Bump the version in **all three** places (the workflow refuses to release if they differ):
+   - `custom_components/boiler_monitor/manifest.json` → `"version"`
+   - `custom_components/boiler_monitor/const.py` → `VERSION`
+   - `custom_components/boiler_monitor/frontend/boiler-monitor-card.js` → `CARD_VERSION` (this also busts the browser cache for the card)
+2. Optionally add release notes in `docs/release-notes/vX.Y.Z.md`. Without that file, notes are generated from the commits.
+3. Push to `main`. The workflow runs the tests, tags `vX.Y.Z`, and publishes the release with `boiler_monitor.zip` attached. HACS then offers the update.
+
 ## License
 
 MIT
