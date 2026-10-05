@@ -7,40 +7,47 @@
         "data": {
           "name": "Name",
           "burner_entity": "Burner / heat-demand entity",
-          "burner_on_state": "State meaning 'burner on'",
-          "flow_temp_entity": "Flow temperature sensor",
-          "return_temp_entity": "Return temperature sensor",
-          "outdoor_temp_entity": "Outdoor temperature sensor",
-          "indoor_temp_entities": "Indoor temperature sensors",
-          "season_entity": "Heating-season entity (optional)",
-          "season_state": "State meaning 'heating season active'"
+          "burner_on_state": "State meaning \"burner on\" (text)",
+          "flow_temp_entity": "Flow temperature sensor (°C) – optional",
+          "return_temp_entity": "Return temperature sensor (°C) – optional",
+          "outdoor_temp_entity": "Outdoor temperature sensor (°C) – optional",
+          "indoor_temp_entities": "Indoor temperature sensors (°C) – optional",
+          "season_entity": "Heating-season entity – optional",
+          "season_state": "State meaning \"heating season active\" (text)"
         },
         "data_description": {
-          "burner_entity": "binary_sensor / switch / input_boolean (relay or flame), climate (uses hvac_action), or a text sensor.",
-          "burner_on_state": "Usually 'on'. For a climate entity: the hvac_action value, e.g. 'heating'. For a text sensor: its exact state.",
-          "season_entity": "If set, monitoring pauses while this entity is not in the state below. Leave empty to monitor always.",
-          "season_state": "e.g. 'on', 'heat', or the option text of an input_select.",
-          "indoor_temp_entities": "Average of the available sensors is used for the heating-effect check."
+          "name": "A name for this boiler. It is used for the device and for the entity IDs, e.g. \"Centrala\" creates sensor.centrala_status.",
+          "burner_entity": "The entity that is ON while the burner fires (or while there is heat demand). It can be a switch (e.g. the ESPHome relay that drives the boiler), a binary_sensor (flame), an input_boolean, a climate entity (its hvac_action is used) or a sensor with a text state.",
+          "burner_on_state": "The exact state that means \"burner on\". Use \"on\" for switch / binary_sensor / input_boolean, \"heating\" for a climate entity, or the exact text of a sensor's state.",
+          "flow_temp_entity": "Temperature of the hot water leaving the boiler towards the radiators, in °C. Needed for the flow-return ΔT.",
+          "return_temp_entity": "Temperature of the water coming back from the radiators into the boiler, in °C. Needed for the condensing ratio and the \"Condensation lost\" alert.",
+          "outdoor_temp_entity": "Outside air temperature, in °C. Needed for the outdoor correlation, balance point and burn hours per degree-day.",
+          "indoor_temp_entities": "One or more room temperature sensors, in °C. Their average (unavailable sensors are skipped) is used to check whether heating actually warms the house.",
+          "season_entity": "Optional. While this entity is NOT in the state below, monitoring is paused (no cycles counted, no alerts) – useful in summer when the boiler only makes hot water. Leave empty to monitor all year.",
+          "season_state": "The state of the heating-season entity that means \"heating season active\", e.g. \"on\" (input_boolean / switch), \"heat\" (climate) or the exact option text of an input_select. Ignored if no heating-season entity is selected."
         }
       },
       "reconfigure": {
         "title": "Boiler Monitor",
         "data": {
           "burner_entity": "Burner / heat-demand entity",
-          "burner_on_state": "State meaning 'burner on'",
-          "flow_temp_entity": "Flow temperature sensor",
-          "return_temp_entity": "Return temperature sensor",
-          "outdoor_temp_entity": "Outdoor temperature sensor",
-          "indoor_temp_entities": "Indoor temperature sensors",
-          "season_entity": "Heating-season entity (optional)",
-          "season_state": "State meaning 'heating season active'"
+          "burner_on_state": "State meaning \"burner on\" (text)",
+          "flow_temp_entity": "Flow temperature sensor (°C) – optional",
+          "return_temp_entity": "Return temperature sensor (°C) – optional",
+          "outdoor_temp_entity": "Outdoor temperature sensor (°C) – optional",
+          "indoor_temp_entities": "Indoor temperature sensors (°C) – optional",
+          "season_entity": "Heating-season entity – optional",
+          "season_state": "State meaning \"heating season active\" (text)"
         },
         "data_description": {
-          "burner_entity": "binary_sensor / switch / input_boolean (relay or flame), climate (uses hvac_action), or a text sensor.",
-          "burner_on_state": "Usually 'on'. For a climate entity: the hvac_action value, e.g. 'heating'. For a text sensor: its exact state.",
-          "season_entity": "If set, monitoring pauses while this entity is not in the state below. Leave empty to monitor always.",
-          "season_state": "e.g. 'on', 'heat', or the option text of an input_select.",
-          "indoor_temp_entities": "Average of the available sensors is used for the heating-effect check."
+          "burner_entity": "The entity that is ON while the burner fires (or while there is heat demand). It can be a switch (e.g. the ESPHome relay that drives the boiler), a binary_sensor (flame), an input_boolean, a climate entity (its hvac_action is used) or a sensor with a text state.",
+          "burner_on_state": "The exact state that means \"burner on\". Use \"on\" for switch / binary_sensor / input_boolean, \"heating\" for a climate entity, or the exact text of a sensor's state.",
+          "flow_temp_entity": "Temperature of the hot water leaving the boiler towards the radiators, in °C. Needed for the flow-return ΔT.",
+          "return_temp_entity": "Temperature of the water coming back from the radiators into the boiler, in °C. Needed for the condensing ratio and the \"Condensation lost\" alert.",
+          "outdoor_temp_entity": "Outside air temperature, in °C. Needed for the outdoor correlation, balance point and burn hours per degree-day.",
+          "indoor_temp_entities": "One or more room temperature sensors, in °C. Their average (unavailable sensors are skipped) is used to check whether heating actually warms the house.",
+          "season_entity": "Optional. While this entity is NOT in the state below, monitoring is paused (no cycles counted, no alerts) – useful in summer when the boiler only makes hot water. Leave empty to monitor all year.",
+          "season_state": "The state of the heating-season entity that means \"heating season active\", e.g. \"on\" (input_boolean / switch), \"heat\" (climate) or the exact option text of an input_select. Ignored if no heating-season entity is selected."
         }
       }
     },
@@ -54,19 +61,24 @@
       "init": {
         "title": "Tuning & alerts",
         "data": {
-          "short_cycle_minutes": "Short-cycle threshold (min off-time)",
-          "return_threshold": "Return temperature threshold (condensation)",
-          "return_hot_minutes": "Minutes above threshold before alert",
-          "effect_check_minutes": "Heating-effect check delay",
-          "min_temp_rise": "Minimum expected room temperature rise",
-          "min_burn_seconds": "Ignore burns shorter than",
-          "notify_service": "Notification service",
-          "csv_log": "Write CSV log"
+          "short_cycle_minutes": "Short-cycle threshold (minutes)",
+          "return_threshold": "Return temperature threshold (°C)",
+          "return_hot_minutes": "Return too hot for (minutes)",
+          "effect_check_minutes": "Heating-effect check delay (minutes)",
+          "min_temp_rise": "Minimum expected room rise (°C)",
+          "min_burn_seconds": "Ignore burns shorter than (seconds)",
+          "notify_service": "Notification service (text) – optional",
+          "csv_log": "Write CSV log (on/off)"
         },
         "data_description": {
-          "notify_service": "e.g. notify.mobile_app_my_phone (or a notify entity). Empty = no push alerts (events and binary sensors still work).",
-          "min_burn_seconds": "Relay glitches shorter than this are discarded.",
-          "csv_log": "Appends events to /config/boiler_monitor/ (one CSV file per boiler)"
+          "short_cycle_minutes": "In minutes. If the burner starts again sooner than this after it stopped, the start is counted as a short cycle and an alert is raised. Default 10 min.",
+          "return_threshold": "In °C. Above this return temperature a condensing boiler stops condensing and loses efficiency (≈ 55 °C for natural gas). Default 53 °C.",
+          "return_hot_minutes": "In minutes. How long the return must stay above the threshold, while the burner is on, before the \"Condensation lost\" alert is raised. Short peaks are ignored. Default 15 min.",
+          "effect_check_minutes": "In minutes. How long after the burner starts the room temperatures are checked again to see if they rose. Use 30–45 for radiators, 90–120 for underfloor heating. Default 45 min.",
+          "min_temp_rise": "In °C. If the average room temperature rose less than this after the check delay, \"Heating ineffective\" is raised (e.g. air in radiators, closed valves, flow too cold). Default 0.2 °C.",
+          "min_burn_seconds": "In seconds. Burns shorter than this are treated as relay glitches or failed ignitions and are removed completely from the statistics. Default 20 s.",
+          "notify_service": "Where to send push alerts, e.g. notify.mobile_app_my_phone (or a notify entity). Leave empty for no push notifications – events and binary sensors work either way. Max one alert per hour per type.",
+          "csv_log": "When on, every START / STOP / SHORT_CYCLE / RETURN_HOT / INEFFECTIVE event is appended to a CSV file in /config/boiler_monitor/ (one file per boiler)."
         }
       }
     }
