@@ -66,7 +66,7 @@
         "data_description": {
           "notify_service": "e.g. notify.mobile_app_my_phone (or a notify entity). Empty = no push alerts (events and binary sensors still work).",
           "min_burn_seconds": "Relay glitches shorter than this are discarded.",
-          "csv_log": "Appends events to /config/boiler_monitor/<name>.csv"
+          "csv_log": "Appends events to /config/boiler_monitor/ (one CSV file per boiler)"
         }
       }
     }
