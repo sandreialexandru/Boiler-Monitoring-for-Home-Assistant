@@ -1,0 +1,88 @@
+name: Release
+
+# Publishes a GitHub release (tag vX.Y.Z + boiler_monitor.zip) whenever the
+# version in manifest.json changes on main and no release exists for it yet.
+# Release notes: docs/release-notes/vX.Y.Z.md if present, otherwise generated
+# automatically from the commits since the previous release.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - custom_components/boiler_monitor/manifest.json
+      - .github/workflows/release.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Read version
+        id: version
+        run: |
+          VERSION=$(jq -r .version custom_components/boiler_monitor/manifest.json)
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Manifest version: $VERSION"
+
+      - name: Check whether the release already exists
+        id: exists
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "${{ steps.version.outputs.tag }}" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "Release ${{ steps.version.outputs.tag }} already exists, nothing to do."
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Check that all version numbers match
+        if: steps.exists.outputs.exists == 'false'
+        run: |
+          V="${{ steps.version.outputs.version }}"
+          grep -q "^VERSION = \"$V\"" custom_components/boiler_monitor/const.py \
+            || { echo "::error file=custom_components/boiler_monitor/const.py::VERSION must be \"$V\""; exit 1; }
+          grep -q "const CARD_VERSION = \"$V\"" custom_components/boiler_monitor/frontend/boiler-monitor-card.js \
+            || { echo "::error file=custom_components/boiler_monitor/frontend/boiler-monitor-card.js::CARD_VERSION must be \"$V\""; exit 1; }
+
+      - uses: actions/setup-python@v5
+        if: steps.exists.outputs.exists == 'false'
+        with:
+          python-version: "3.13"
+
+      - name: Run tests
+        if: steps.exists.outputs.exists == 'false'
+        run: |
+          pip install -r requirements_test.txt
+          pytest -q
+
+      - name: Build zip
+        if: steps.exists.outputs.exists == 'false'
+        run: |
+          cd custom_components
+          zip -r ../boiler_monitor.zip boiler_monitor -x '*__pycache__*'
+
+      - name: Publish release
+        if: steps.exists.outputs.exists == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${{ steps.version.outputs.tag }}"
+          NOTES="docs/release-notes/$TAG.md"
+          if [ -f "$NOTES" ]; then
+            gh release create "$TAG" boiler_monitor.zip --target "$GITHUB_SHA" --title "$TAG" --notes-file "$NOTES"
+          else
+            gh release create "$TAG" boiler_monitor.zip --target "$GITHUB_SHA" --title "$TAG" --generate-notes
+          fi
