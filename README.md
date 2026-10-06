@@ -461,7 +461,13 @@ Tip: insulate the probe and the pipe together. A bare probe reads several degree
 
 **The card says "Pick the Boiler Monitor status sensor".** Select the `sensor.<name>_status` entity, not one of the statistics sensors.
 
-**The card isn't in the card picker.** Hard-refresh the browser (Ctrl+F5). In the companion app: Settings → Companion app → Debugging → Reset frontend cache.
+**The card isn't in the card picker / "Custom element doesn't exist: boiler-monitor-card".** The integration adds the card to **Settings → Dashboards → ⋮ → Resources** automatically (`/boiler_monitor/boiler-monitor-card.js?v=<version>`, type *JavaScript module*) and keeps the version up to date on every update. Check that the entry is there, then hard-refresh the browser (Ctrl+F5). In the companion app: Settings → Companion app → Debugging → **Reset frontend cache**, once. If you added the card manually in the past under another URL, delete that entry. In **YAML-mode** dashboards resources are read-only, so add it yourself:
+```yaml
+lovelace:
+  resources:
+    - url: /boiler_monitor/boiler-monitor-card.js
+      type: module
+```
 
 **Balance point / per-degree-day stay `unknown`.** They need an outdoor sensor and at least 3 complete days (7 for per-degree-day) of data.
 
