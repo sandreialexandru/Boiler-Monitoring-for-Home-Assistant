@@ -731,7 +731,7 @@ class BoilerMonitor:
         return _r(self._sum_hours(start, end, sum_f) / n) if n else None
 
     def curve_points(self, hours: int = CURVE_HOURS) -> list[list[Any]]:
-        """Per hour: [outdoor avg, target avg, actual flow avg (burning) | None, mode 1=curve 0=fixed]."""
+        """Per hour: [outdoor avg, target avg, actual flow avg (burning) | None, mode 1=curve 0=fixed, hour start ts]."""
         now = dt_util.utcnow().timestamp()
         out = []
         for k in sorted(self.hours):
@@ -746,6 +746,7 @@ class BoilerMonitor:
                     round(v["tgt_sum"] / v["tgt_n"], 1),
                     round(v["fl_sum"] / v["fl_n"], 1) if v.get("fl_n") else None,
                     1 if v.get("th_n", 0) * 2 >= v["tgt_n"] else 0,
+                    k,  # hour start (epoch seconds, UTC)
                 ]
             )
         return out
