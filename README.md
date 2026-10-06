@@ -37,6 +37,7 @@ It works with any boiler. All it needs is an entity that tells it when the burne
 - [Configuration](#configuration)
 - [Entities](#entities)
 - [The card](#the-card)
+- [Reading the card: a plain-language guide](#reading-the-card-a-plain-language-guide)
 - [Events, services and CSV log](#events-services-and-csv-log)
 - [How the numbers are calculated](#how-the-numbers-are-calculated)
 - [Using it to tune your heating curve](#using-it-to-tune-your-heating-curve)
@@ -182,20 +183,155 @@ The compact card shows the status, active alerts as icons, four key numbers and 
 ### What's on the full card
 
 1. **Header**: animated flame while burning, how long the current burn has lasted, a status chip.
-2. **Alert chips**: short-cycling, condensation lost, heating ineffective. They only appear when active.
-3. **Live temperatures**: flow, return (green while condensing, red above the threshold), ΔT, outdoor, indoor average.
+2. **Alert chips**: short-cycling, condensation lost, heating ineffective, pressure problem. They only appear when active.
+3. **Live values**: flow, target (with the mode, *curve* or *fixed*), return (green while condensing, red above the threshold), ΔT, outdoor, indoor average, pressure.
 4. **Statistics tiles**: cycles today (with short cycles), cycles/h, average burn, average off, 24 h duty cycle, burn today, condensing %, heating rate.
-5. **Last 24 hours**: every burn as a bar, short cycles in red, the current burn pulsing.
-6. **Last 14 days**: burn hours per day, with the date and average outdoor temperature underneath. A red cap marks days with short cycles.
-7. **Heating curve / Fixed flow temperature** (with a setpoint sensor). It adapts to the regulation mode:
-   - *Weather compensation*: one orange dot per hour = the flow target at that outdoor temperature, hollow blue dots = the real flow while burning, plus the fitted curve with its **slope** and the target at 0 °C and −10 °C.
-   - *Fixed flow*: a dashed line at the fixed flow temperature and the real flow while burning.
-   - Both modes show the 24 h average of *real vs target*.
-8. **Burn vs outdoor**: one dot per full day (newer days are more opaque), the regression line, the balance point (green line), burn per degree-day and R².
+5. **Last 24 hours**: every burn as a bar.
+6. **Last 14 days**: burn time per day.
+7. **Heating curve / Fixed flow temperature**, if you configured a setpoint sensor.
+8. **Burn vs outdoor**: one dot per full day.
 
-Durations are shown in hours and minutes (e.g. `2 h 14 min`, `45 min`), never as decimal hours. Tapping any value opens the more-info dialog of the underlying entity. The card follows your theme (light/dark), works in both masonry and sections views, and has a visual editor.
+Durations are always in hours and minutes (`2 h 14 min`, `45 min`), never decimal hours. Tapping a value opens the more-info dialog of the underlying entity. The card follows your theme (light/dark), works in masonry and sections views, and has a visual editor.
+
+### Tooltips
+
+Hover any bar, dot or timeline segment with the mouse, or **tap** it on a phone or tablet, to see its details. Tap again, or tap anywhere else on the card, to close it.
+
+| Where | What the tooltip shows |
+|---|---|
+| Last 24 hours (a segment) | start – end time, burn duration, whether it was a short cycle |
+| Last 14 days (a bar) / Burn vs outdoor (a dot) | the day, burn time, cycles (and how many were short), average outdoor temperature, condensing %, average ΔT |
+| Heating curve (a dot) | the day and hour, outdoor temperature, target flow, actual flow, actual − target, regulation mode |
+
+<p align="center">
+  <img src="docs/images/tooltip-day.png" width="300" alt="Day tooltip">
+  &nbsp;
+  <img src="docs/images/tooltip-curve.png" width="300" alt="Heating-curve tooltip">
+</p>
 
 A complete example dashboard view is in [`examples/dashboard.yaml`](examples/dashboard.yaml).
+
+## Reading the card: a plain-language guide
+
+The ranges below are rules of thumb for a gas condensing boiler with radiators. Every house is different. What matters most is how **your own** numbers change over time.
+
+### Live values
+
+| Value | What it is | Good | Watch out |
+|---|---|---|---|
+| **Flow** | water leaving the boiler towards the radiators | 35–55 °C, lower when it's milder outside | above 65 °C when it's only a few degrees below zero |
+| **Target** | the flow temperature the boiler is aiming for. *curve* = it follows the outdoor temperature, *fixed* = a constant value you set | – | – |
+| **Return** | water coming back from the radiators | **below the threshold** (green) | **red**: the boiler has stopped condensing |
+| **ΔT** | flow − return: how much heat the radiators gave off | 10–20 °C | below 8 °C: pump too fast or water bypassing the radiators |
+| **Pressure** | water pressure in the heating circuit. The arrow (↓0.2) appears when it moved ≥ 0.1 bar in a week | 1.0–2.0 bar | red: outside the min/max you set. A steady ↓ week after week means a slow leak |
+
+### Statistics tiles
+
+| Tile | Meaning | Good | Problem |
+|---|---|---|---|
+| **Cycles today** | burner starts since midnight, with the short ones | few starts, 0 short | many short cycles |
+| **Cycles / h** | starts per hour, averaged over 24 h | ≤ 2–3 | > 4 (turns amber) |
+| **Avg burn** | how long the burner runs each time | ≥ 10–15 min | < 5–7 min |
+| **Avg off** | pause between burns | ≥ 10 min | a few minutes |
+| **Duty 24h** | share of the last 24 h with the burner on | depends on the weather: 20–40 % in mild weather, 60–90 % in frost | 100 % for days in a row in frost: the boiler barely keeps up |
+| **Burn today** | total burn time since midnight | – | compare with days of similar weather |
+| **Condensing** | share of burn time with the return at or below the threshold | **≥ 80 %** (green) | < 50 % (red): efficiency lost |
+| **Heating rate** | how fast the rooms warmed after the burner started | 0.3–1 °C/h | ≤ 0: burning without effect |
+
+### Last 24 hours
+
+Every orange segment is one burn. Its width is how long it lasted, and the gap before it is the pause.
+- **Long, well-spaced segments** are what you want.
+- **Many thin segments packed together** mean the boiler is switching on and off all the time.
+- **Red** = short cycle (it restarted too soon after the previous stop). Note **when** they happen: often in the morning after a night set-back, or at midday when the sun comes out.
+- The segment that **pulses** is the burn happening right now.
+
+### Last 14 days
+
+One bar per day. Above the bar is the total burn time. Below it are **the day of the month** and **the average outdoor temperature** that day. The last bar is today, so it is still growing.
+- Bars should be **taller on colder days**.
+- A tall bar on a mild day is suspicious: a window left open, a curve set too high, guests…
+- A **red cap** on top means there were short cycles that day.
+
+### Heating curve (weather compensation)
+
+When automatic thermoregulation is **on**, the boiler looks at the outdoor temperature and decides how hot the water should be. The colder it is, the hotter the water. That rule is the **heating curve**.
+
+- **Orange dots**: one per hour = the target the boiler chose at that outdoor temperature.
+- **Hollow blue circles**: the real flow during the same hour while burning (the first 5 minutes of each burn, while the water heats up, are left out).
+- **Dashed line**: the straight line that fits the orange dots best.
+- **Slope**: how many °C the target rises for each °C colder outside.
+- **At 0 °C / at −10 °C**: the target read off the line.
+
+**How the slope is calculated.** Every hour gives one point: (average outdoor temperature, average target). Over a few days you get dozens of points at different outdoor temperatures. The integration lays a straight ruler through them so that it passes as close as possible to all of them (a *least-squares* fit), and the slope is how steep that ruler is. Example, slope = 1.4:
+
+| Outdoor | Target |
+|---|---|
+| 10 °C | 41 °C |
+| 0 °C | 55 °C |
+| −10 °C | 69 °C |
+
+From 0 °C to −10 °C is 10 degrees colder, so the target rises by 10 × 1.4 = 14 °C. The slope needs at least **6 hours spanning ≥ 3 °C** of outdoor temperature. If all the points sit at the same outdoor temperature, the ruler could point anywhere.
+
+> The slope here is in °C of flow per °C outdoor. The number you set in the boiler's menu is on the manufacturer's own scale and **will usually not be the same number**. What matters is how our slope moves when you change the setting.
+>
+> The boiler computes its curve from **its own** outdoor value. If you want this chart to match the boiler exactly, use the boiler's outdoor sensor (e.g. Ariston *Outside temp*) as the integration's outdoor sensor, or check that both read the same.
+
+**Reading it:**
+
+| You see | It means |
+|---|---|
+| Orange dots sit neatly on the line | the boiler follows its curve. Normal |
+| Blue circles **on or slightly below** the orange dots | the boiler reaches its target. Ideal |
+| Blue **well below** orange (5 °C or more), all the time | it can't reach the target: power limited, pump too fast, or it stops before getting there |
+| Blue **above** orange, plus many short cycles | even at minimum power the boiler gives more heat than needed: it overshoots, stops, restarts |
+| Orange dots scattered, not on a line | the target also changed for other reasons (settings changed, mode switched), or the outdoor sensor isn't the one the boiler uses |
+
+*Actual vs target (24h)* under the chart is the average gap between blue and orange. Between −3 and +1 °C is good.
+
+### Fixed flow temperature
+
+When thermoregulation is **off**, the boiler always aims for the same flow temperature.
+
+- **Dashed line**: the fixed flow temperature you set.
+- **Hollow blue circles**: the real flow while burning, at different outdoor temperatures.
+
+The blue circles should stay close to the line. The chart also makes one thing visible: with a fixed flow, **the water is just as hot at +10 °C outside as at −10 °C**. In mild weather that is far more than the house needs, which leads to short cycles and less condensing. If you see many circles on the warm side of the chart **and** short cycling, switching thermoregulation on is likely to help.
+
+Every change of mode is written to the CSV log (`MODE`), and so is every change of the fixed temperature (`SETPOINT`), so you can tell what changed and when.
+
+### Burn vs outdoor
+
+This chart answers one question: **how long must the boiler burn in a day, given how cold it was outside?**
+
+- **Each orange dot is one full day**: average outdoor temperature (horizontal) and total burn time (vertical). Paler dots are older days. Today is not shown until it is over.
+- **Dashed line**: the best straight line through the dots. It goes down to the right: the warmer it is outside, the less the boiler burns.
+- **Green vertical line**: the **balance point**, where the line reaches zero burn time.
+
+**The numbers below the chart:**
+
+- **Balance point** (e.g. 13.7 °C): above this daily average outdoor temperature your house needs no heating. Sun, people and appliances keep it warm. For an ordinary house it is usually **14–17 °C**. Much higher (19–20 °C) means the house loses a lot of heat, or the curve is set too high and the boiler heats when it doesn't need to.
+- **Minutes per degree-day** (e.g. 44): how long the boiler burns for each degree-day of cold. This is **the number to compare before and after a change**, because it is already corrected for the weather. **Lower is better.** It is calculated over the last 7 complete days.
+- **R²**: how well the dots follow the line, from 0 to 1. Above 0.7 the balance point can be trusted. Below 0.5, wait a few more days.
+- **n**: how many days the line is based on.
+
+**What is a degree-day?** It measures how cold a day was: `18 °C − the day's average outdoor temperature` (0 if the result is negative).
+- A day averaging 3 °C → 18 − 3 = **15 degree-days**
+- A day averaging 13 °C → **5 degree-days**
+
+With 44 min per degree-day, the 15 degree-day day needs 15 × 44 = 660 min = **11 h** of burning.
+
+**Why 18 °C?** It is a convention, not something measured in your house. It is the base commonly used in Europe (Eurostat uses 18 °C too): at an average of 18 °C outside, a typical house needs no heating. Other standards use other bases (15.5 °C in the UK, 20 °C in some German norms). For comparing one week with another the exact base doesn't matter, as long as it stays the same. Your measured **balance point** is the base that actually fits your house.
+
+| You see | It means |
+|---|---|
+| Dots close to the line | the house behaves predictably. Normal |
+| One dot well **above** the line | that day used more than usual for the weather: open window, strong wind, guests, a higher room setting |
+| One dot well **below** the line | less than usual: strong sun, nobody home, or an incomplete first day |
+| New (solid) dots **below** the old (pale) ones | a recent change helped: less burning in the same weather |
+| New dots **above** the old ones | you now burn more in the same weather. Check what changed |
+
+> If the burner entity is a relay driven by a thermostat, "burn time" is really *heat-demand time*: the boiler may modulate or pause inside it. That is fine for comparing weeks, because it is measured the same way every day.
 
 ## Events, services and CSV log
 
@@ -244,19 +380,34 @@ time;event;burn_min;off_min;outdoor;flow;return;indoor_avg;extra
 
 ## Using it to tune your heating curve
 
+**The method:**
+1. Write down **minutes per degree-day** and **condensing %** as they are now.
+2. Change **one** thing, in small steps: curve slope ±0.1–0.2, offset ±1–2 °C, thermostat hysteresis, or pump speed.
+3. Wait **5–7 days**, ideally with similar weather.
+4. Compare. If minutes per degree-day went down and the rooms are still comfortable, keep the change.
+
+**Which knob to turn**, based on room comfort:
+
+| Symptom | Change |
+|---|---|
+| **Cold indoors when it's freezing**, fine when mild | **raise the slope** |
+| **Too warm indoors when it's mild**, fine when freezing | **lower the offset** (shifts the whole line down) |
+| **Always too cold**, whatever the weather | **raise the offset** |
+| **Always too warm** | **lower the offset** |
+
+**What the card tells you to fix:**
+
 | What you see | Likely cause | What to try |
 |---|---|---|
-| Many short cycles, short burns (< 10 min) | Boiler minimum output > heat demand; curve too high in mild weather | Lower the curve **parallel shift** / offset; enable or extend the boiler's anti-cycling timer; with a thermostat relay, increase hysteresis or `min_cycle_duration` |
+| Many short cycles, short burns (< 10 min) | Boiler minimum output > heat demand; curve too high in mild weather | Lower the curve **offset**; enable or extend the boiler's anti-cycling timer; with a thermostat relay, increase hysteresis or `min_cycle_duration` |
 | Condensing ratio < 80 %, *Condensation lost* alerts | Flow temperature too high, or ΔT too small (pump too fast) | Lower the curve **slope**; reduce the pump speed so ΔT reaches ~15–20 °C |
 | ΔT < 8 °C | Pump speed too high / bypass open | Lower the pump speed, check the bypass valve |
 | *Heating ineffective* | Flow too low for the current outdoor temperature, TRVs closed, air in radiators | Raise the slope slightly, check TRVs, bleed radiators |
-| Balance point well above 16 °C | Curve too high overall or high heat loss | Lower the parallel shift. Check the windows (or the boiler's location, e.g. an open balcony) |
-| Burn per degree-day | – | Note it before a change and compare 7 days later at similar outdoor temperatures. Lower is better |
+| Balance point well above 16 °C | Curve too high overall or high heat loss | Lower the offset. Check windows (or where the boiler is installed, e.g. an open balcony) |
 | Real flow constantly 5 °C+ below target | Boiler can't reach the target (power limited, flow too high) | Check the pump speed and the max heating power setting |
-| Real flow above target, many short cycles | Minimum modulation is higher than the demand | Lower the curve or switch to a fixed lower flow temperature in mild weather |
+| Real flow above target, many short cycles | Minimum modulation is higher than the demand | Lower the curve, or switch to weather compensation if you run a fixed flow |
+| Fixed flow + short cycles in mild weather | Water much hotter than needed when it's mild | Switch automatic thermoregulation on |
 | Pressure drops ~0.1 bar or more per week | Slow leak or a failing expansion vessel | Check radiator valves and fittings; have the expansion vessel checked |
-
-Change **one thing at a time** and wait a few days. The 14-day chart and the regression make the effect visible.
 
 ## Example: ESPHome relay + DS18B20
 

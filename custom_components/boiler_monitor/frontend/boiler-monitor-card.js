@@ -11,7 +11,7 @@
  *   show_correlation: true
  *   show_curve: true      # heating curve / fixed flow chart (needs a flow setpoint sensor)
  */
-const CARD_VERSION = "1.1.0";
+const CARD_VERSION = "1.1.1";
 
 const I18N = {
   en: {
@@ -31,6 +31,9 @@ const I18N = {
     dev24: "actual vs target (24h)", leg_target: "target", leg_actual: "actual (burning)",
     need_curve: "Needs ≥ 6 hours with outdoor temperatures at least 3 °C apart",
     no_points: "No data yet",
+    tt_burn: "Burn time", tt_cycles: "Cycles", tt_outdoor: "Outdoor", tt_cond: "Condensing", tt_dt: "Avg ΔT",
+    tt_target: "Target", tt_actual: "Actual flow", tt_diff: "Actual − target", tt_mode: "Mode",
+    tt_running: "running", tt_short: "short cycle", tt_from: "Off before", tt_noburn: "not burning this hour",
   },
   ro: {
     heating: "Încălzește", idle: "În așteptare", off_season: "În afara sezonului", unavailable: "Indisponibil",
@@ -49,6 +52,9 @@ const I18N = {
     dev24: "real vs cerut (24h)", leg_target: "cerut", leg_actual: "real (în ardere)",
     need_curve: "Necesită ≥ 6 ore cu temperaturi exterioare diferite cu cel puțin 3 °C",
     no_points: "Încă nu sunt date",
+    tt_burn: "Timp de ardere", tt_cycles: "Cicluri", tt_outdoor: "Exterior", tt_cond: "Condensare", tt_dt: "ΔT mediu",
+    tt_target: "Tur cerut", tt_actual: "Tur real", tt_diff: "Real − cerut", tt_mode: "Mod",
+    tt_running: "în curs", tt_short: "ciclu scurt", tt_from: "Pauză înainte", tt_noburn: "nu a ars în ora asta",
   },
 };
 
@@ -73,6 +79,9 @@ const durShort = (min) => {
   const m = Math.round(Number(min));
   return m < 60 ? `${m}m` : `${Math.floor(m / 60)}h${String(m % 60).padStart(2, "0")}`;
 };
+// Tooltip content: title + rows of [label, value]; stored escaped in data-tip.
+const tipHtml = (title, rows) =>
+  `<b>${title}</b>` + rows.filter((r) => r && r[1] != null && r[1] !== "").map(([l, v]) => `<div><span>${l}</span><span>${v}</span></div>`).join("");
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 
 class BoilerMonitorCard extends HTMLElement {
@@ -132,6 +141,70 @@ class BoilerMonitorCard extends HTMLElement {
   get _t() {
     const lang = (this._hass?.locale?.language || this._hass?.language || "en").slice(0, 2);
     return I18N[lang] || I18N.en;
+  }
+
+  get _lang() {
+    return (this._hass?.locale?.language || this._hass?.language || "en");
+  }
+
+  _fmtDay(iso) {
+    try {
+      return new Date(`${iso}T12:00:00`).toLocaleDateString(this._lang, { weekday: "short", day: "numeric", month: "short" });
+    } catch (e) { return iso; }
+  }
+
+  _fmtTs(ts, withDay = true) {
+    try {
+      const o = { hour: "2-digit", minute: "2-digit" };
+      if (withDay) Object.assign(o, { weekday: "short", day: "numeric", month: "short" });
+      return new Date(ts * 1000).toLocaleString(this._lang, o);
+    } catch (e) { return String(ts); }
+  }
+
+  _dayTip(d) {
+    const t = this._t;
+    return tipHtml(esc(this._fmtDay(d.date)), [
+      [t.tt_burn, durText(d.burn_h * 60)],
+      [t.tt_cycles, d.cycles != null ? `${d.cycles}${d.short ? ` (${d.short} ${t.short})` : ""}` : null],
+      [t.tt_outdoor, d.outdoor != null ? `${fmt(d.outdoor, 1)} °C` : null],
+      [t.tt_cond, d.cond_pct != null ? `${fmt(d.cond_pct, 0)} %` : null],
+      [t.tt_dt, d.delta_t != null ? `${fmt(d.delta_t, 1)} °C` : null],
+    ]);
+  }
+
+  // Floating tooltip: hover (mouse) or tap (touch). One element, re-used.
+  _wireTips() {
+    const root = this.shadowRoot;
+    const card = root.querySelector("ha-card");
+    const tip = root.querySelector(".tip");
+    if (!card || !tip) return;
+    let pinned = null;
+    const show = (el, ev) => {
+      tip.innerHTML = el.getAttribute("data-tip");
+      tip.style.display = "block";
+      const cr = card.getBoundingClientRect();
+      const er = el.getBoundingClientRect();
+      const x = (ev && ev.clientX != null ? ev.clientX : er.left + er.width / 2) - cr.left;
+      const y = er.top - cr.top;
+      const tw = tip.offsetWidth, th = tip.offsetHeight;
+      let left = Math.min(Math.max(8, x - tw / 2), cr.width - tw - 8);
+      let top = y - th - 8;
+      if (top < 4) top = er.bottom - cr.top + 8;
+      tip.style.left = `${left}px`;
+      tip.style.top = `${top}px`;
+    };
+    const hide = () => { tip.style.display = "none"; pinned = null; };
+    root.querySelectorAll("[data-tip]").forEach((el) => {
+      el.addEventListener("pointerenter", (ev) => { if (ev.pointerType === "mouse") show(el, ev); });
+      el.addEventListener("pointermove", (ev) => { if (ev.pointerType === "mouse" && !pinned) show(el, ev); });
+      el.addEventListener("pointerleave", (ev) => { if (ev.pointerType === "mouse" && !pinned) hide(); });
+      el.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        if (pinned === el) { hide(); return; }
+        show(el, ev); pinned = el;
+      });
+    });
+    card.addEventListener("click", () => { if (pinned) hide(); });
   }
 
   _moreInfo(entityId) {
@@ -234,13 +307,14 @@ class BoilerMonitorCard extends HTMLElement {
     }
 
     this.shadowRoot.innerHTML = `<style>${STYLE}</style>
-      <ha-card class="${compact ? "compact" : ""}"><div class="wrap">${header}${body}</div></ha-card>`;
+      <ha-card class="${compact ? "compact" : ""}"><div class="wrap">${header}${body}</div><div class="tip" role="tooltip"></div></ha-card>`;
     this.shadowRoot.querySelectorAll("[data-ent]").forEach((el) => {
       const id = el.getAttribute("data-ent");
       if (!id) return;
       el.classList.add("click");
       el.addEventListener("click", () => this._moreInfo(id));
     });
+    this._wireTips();
   }
 
   _condCls(v) {
@@ -263,7 +337,11 @@ class BoilerMonitorCard extends HTMLElement {
       const x1 = Math.max(0, ((s - t0) / span) * W);
       const x2 = Math.min(W, (((e ?? now) - t0) / span) * W);
       if (x2 <= 0) return "";
-      return `<rect x="${x1.toFixed(1)}" y="0" width="${Math.max(1.5, x2 - x1).toFixed(1)}" height="${H}" rx="1.5" class="${sh ? "seg short" : "seg"}${e == null ? " live" : ""}"/>`;
+      const tt = this._t;
+      const tip = small ? "" : esc(tipHtml(
+        `${this._fmtTs(s, false)} – ${e == null ? tt.tt_running : this._fmtTs(e, false)}`,
+        [[tt.tt_burn, durText(((e ?? now) - s) / 60)], sh ? ["⚠️", tt.tt_short] : null]));
+      return `<rect x="${x1.toFixed(1)}" y="0" width="${Math.max(1.5, x2 - x1).toFixed(1)}" height="${H}" rx="1.5" class="${sh ? "seg short" : "seg"}${e == null ? " live" : ""}"${tip ? ` data-tip="${tip}"` : ""}/>`;
     }).join("");
     let ticks = "", labels = "";
     if (!small) {
@@ -292,8 +370,7 @@ class BoilerMonitorCard extends HTMLElement {
     const bars = days.map((d) => {
       const h = (d.burn_h / max) * 100;
       const dd = d.date.slice(8, 10);
-      const tip = `${d.date}: ${durText(d.burn_h * 60)} · ${d.cycles} cyc${d.short ? ` (${d.short} ${t.short})` : ""}${d.outdoor != null ? ` · ${fmt(d.outdoor, 1)}°C` : ""}${d.cond_pct != null ? ` · ${fmt(d.cond_pct, 0)}%` : ""}`;
-      return `<div class="bar" title="${esc(tip)}"><div class="bv">${durShort(d.burn_h * 60)}</div>
+      return `<div class="bar" data-tip="${esc(this._dayTip(d))}"><div class="bv">${durShort(d.burn_h * 60)}</div>
         <div class="bcol"><div class="bf ${d.short ? "has-short" : ""}" style="height:${h}%"></div></div>
         <div class="bd">${dd}</div>${d.outdoor != null ? `<div class="bo">${fmt(d.outdoor, 0)}°</div>` : ""}</div>`;
     }).join("");
@@ -344,8 +421,17 @@ class BoilerMonitorCard extends HTMLElement {
     }
     const n = pts.length;
     const op = (i) => (0.3 + 0.7 * (i + 1) / n).toFixed(2);
-    const tgt = fixed ? "" : pts.map((p, i) => `<circle cx="${X(p[0]).toFixed(1)}" cy="${Y(p[1]).toFixed(1)}" r="2.6" class="dot" style="opacity:${op(i)}"><title>${fmt(p[0])}°C → ${t.leg_target} ${fmt(p[1])}°C</title></circle>`).join("");
-    const act = pts.filter((p) => p[2] != null).map((p, i) => `<circle cx="${X(p[0]).toFixed(1)}" cy="${Y(p[2]).toFixed(1)}" r="2.6" class="hdot" style="opacity:.75"><title>${fmt(p[0])}°C → ${t.leg_actual} ${fmt(p[2])}°C</title></circle>`).join("");
+    const hourTip = (p) => esc(tipHtml(
+      p[4] != null ? esc(`${this._fmtTs(p[4])} – ${this._fmtTs(p[4] + 3600, false)}`) : "",
+      [
+        [t.tt_outdoor, `${fmt(p[0], 1)} °C`],
+        [t.tt_target, `${fmt(p[1], 1)} °C`],
+        [t.tt_actual, p[2] != null ? `${fmt(p[2], 1)} °C` : t.tt_noburn],
+        p[2] != null ? [t.tt_diff, `${p[2] - p[1] > 0 ? "+" : ""}${fmt(p[2] - p[1], 1)} °C`] : null,
+        [t.tt_mode, p[3] === 1 ? t.mode_curve : t.mode_fixed],
+      ]));
+    const tgt = fixed ? "" : pts.map((p, i) => `<g class="hit" data-tip="${hourTip(p)}"><circle cx="${X(p[0]).toFixed(1)}" cy="${Y(p[1]).toFixed(1)}" r="7" class="hitc"/><circle cx="${X(p[0]).toFixed(1)}" cy="${Y(p[1]).toFixed(1)}" r="2.6" class="dot" style="opacity:${op(i)}"/></g>`).join("");
+    const act = pts.filter((p) => p[2] != null).map((p) => `<g class="hit" data-tip="${hourTip(p)}"><circle cx="${X(p[0]).toFixed(1)}" cy="${Y(p[2]).toFixed(1)}" r="7" class="hitc"/><circle cx="${X(p[0]).toFixed(1)}" cy="${Y(p[2]).toFixed(1)}" r="2.6" class="hdot" style="opacity:.75"/></g>`).join("");
 
     const parts = [];
     if (fixed && a.flow_target != null) parts.push(`<span data-ent="${esc(a.sources?.setpoint || "")}"><b>${fmt(a.flow_target, 0)} °C</b> ${esc(t.fixed_at)}</span>`);
@@ -378,8 +464,8 @@ class BoilerMonitorCard extends HTMLElement {
     const ymax = Math.ceil(Math.max(1, ...pts.map((p) => p.burn_h)) * 1.1);
     const X = (v) => P.l + ((v - xmin) / (xmax - xmin)) * (W - P.l - P.r);
     const Y = (v) => H - P.b - (v / ymax) * (H - P.t - P.b);
-    const dots = pts.map((p, i) => `<circle cx="${X(p.outdoor).toFixed(1)}" cy="${Y(p.burn_h).toFixed(1)}" r="3.5"
-      class="dot" style="opacity:${(0.35 + 0.65 * (i + 1) / pts.length).toFixed(2)}"><title>${esc(p.date)}: ${fmt(p.outdoor)}°C → ${durText(p.burn_h * 60)}</title></circle>`).join("");
+    const dots = pts.map((p, i) => `<g class="hit" data-tip="${esc(this._dayTip(p))}"><circle cx="${X(p.outdoor).toFixed(1)}" cy="${Y(p.burn_h).toFixed(1)}" r="9" class="hitc"/><circle cx="${X(p.outdoor).toFixed(1)}" cy="${Y(p.burn_h).toFixed(1)}" r="3.5"
+      class="dot" style="opacity:${(0.35 + 0.65 * (i + 1) / pts.length).toFixed(2)}"/></g>`).join("");
     let line = "", bp = "";
     if (reg) {
       const f = (x) => reg.intercept + reg.slope * x;
@@ -414,7 +500,19 @@ class BoilerMonitorCard extends HTMLElement {
 const STYLE = `
   :host { --bm-burn: var(--state-climate-heat-color, #ff8100); --bm-short: var(--error-color, #db4437);
           --bm-good: var(--success-color, #43a047); --bm-warn: var(--warning-color, #ffa600); }
-  ha-card { overflow: hidden; }
+  ha-card { overflow: hidden; position: relative; }
+  .tip { display: none; position: absolute; z-index: 5; pointer-events: none; min-width: 150px; max-width: 240px;
+         padding: 8px 10px; border-radius: 8px; font-size: 12px; line-height: 1.5;
+         background: var(--primary-text-color); color: var(--card-background-color, #fff);
+         box-shadow: 0 4px 14px rgba(0,0,0,.25); }
+  .tip b { display: block; font-weight: 600; margin-bottom: 2px; }
+  .tip div { display: flex; justify-content: space-between; gap: 12px; }
+  .tip div span:first-child { opacity: .75; }
+  .hit { cursor: pointer; }
+  .hitc { fill: transparent; }
+  .hit:hover .dot, .hit:hover .hdot { stroke: var(--primary-text-color); stroke-width: 1.5; }
+  [data-tip] { cursor: pointer; }
+  .bar:hover .bf { opacity: 1; filter: brightness(1.08); }
   .wrap { padding: 16px; display: flex; flex-direction: column; gap: 12px; }
   .compact .wrap { padding: 12px; gap: 8px; }
   .empty { padding: 16px; color: var(--secondary-text-color); }
