@@ -10,7 +10,7 @@
  *   show_daily: true
  *   show_correlation: true
  */
-const CARD_VERSION = "1.0.3";
+const CARD_VERSION = "1.0.4";
 
 const I18N = {
   en: {
@@ -20,9 +20,9 @@ const I18N = {
     cycles_today: "Cycles today", cycles_h: "Cycles / h", avg_burn: "Avg burn", avg_off: "Avg off",
     duty: "Duty 24h", burn_today: "Burn today", cond: "Condensing", rate: "Heating rate",
     short: "short", last24: "Last 24 hours", days: "Last 14 days", corr: "Burn vs outdoor",
-    balance: "Balance point", per_hdd: "h per degree-day", not_enough: "Needs ≥ 3 full days of data",
+    balance: "Balance point", per_hdd: "min per degree-day", not_enough: "Needs ≥ 3 full days of data",
     a_short: "Short-cycling", a_cond: "Condensation lost", a_ineff: "Heating ineffective",
-    no_entity: "Pick the Boiler Monitor status sensor", burn_h: "burn h",
+    no_entity: "Pick the Boiler Monitor status sensor", burn_h: "burn time",
   },
   ro: {
     heating: "Încălzește", idle: "În așteptare", off_season: "În afara sezonului", unavailable: "Indisponibil",
@@ -31,13 +31,33 @@ const I18N = {
     cycles_today: "Cicluri azi", cycles_h: "Cicluri / h", avg_burn: "Ardere medie", avg_off: "Pauză medie",
     duty: "Funcționare 24h", burn_today: "Ardere azi", cond: "Condensare", rate: "Rată încălzire",
     short: "scurte", last24: "Ultimele 24 de ore", days: "Ultimele 14 zile", corr: "Ardere vs exterior",
-    balance: "Punct de echilibru", per_hdd: "h pe grad-zi", not_enough: "Necesită ≥ 3 zile complete de date",
+    balance: "Punct de echilibru", per_hdd: "min pe grad-zi", not_enough: "Necesită ≥ 3 zile complete de date",
     a_short: "Short-cycling", a_cond: "Condensare pierdută", a_ineff: "Încălzire ineficientă",
-    no_entity: "Alege senzorul de stare Boiler Monitor", burn_h: "ore ardere",
+    no_entity: "Alege senzorul de stare Boiler Monitor", burn_h: "timp de ardere",
   },
 };
 
 const fmt = (v, d = 1) => (v === null || v === undefined || Number.isNaN(Number(v)) ? "–" : Number(v).toFixed(d));
+// Durations: never decimal hours. < 60 min -> "45 min"; otherwise "2 h 05 min".
+const durText = (min) => {
+  if (min === null || min === undefined || Number.isNaN(Number(min))) return "–";
+  const m = Math.round(Number(min));
+  if (m < 60) return `${m} min`;
+  return `${Math.floor(m / 60)} h ${String(m % 60).padStart(2, "0")} min`;
+};
+// Same, split for tiles: [value html, unit]
+const durTile = (min) => {
+  if (min === null || min === undefined || Number.isNaN(Number(min))) return ["–", "min"];
+  const m = Math.round(Number(min));
+  if (m < 60) return [String(m), "min"];
+  return [`${Math.floor(m / 60)}<small>h</small> ${String(m % 60).padStart(2, "0")}`, "min"];
+};
+// Compact, for small labels: "45m", "5h48"
+const durShort = (min) => {
+  if (min === null || min === undefined || Number.isNaN(Number(min))) return "–";
+  const m = Math.round(Number(min));
+  return m < 60 ? `${m}m` : `${Math.floor(m / 60)}h${String(m % 60).padStart(2, "0")}`;
+};
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 
 class BoilerMonitorCard extends HTMLElement {
@@ -128,7 +148,7 @@ class BoilerMonitorCard extends HTMLElement {
     ].filter(Boolean);
 
     const sub = status === "heating" && s.current_burn_min != null
-      ? `${t.burning_for} ${fmt(s.current_burn_min, 0)} ${t.min}`
+      ? `${t.burning_for} ${durText(s.current_burn_min)}`
       : (t[status] || status);
 
     const header = `
@@ -151,9 +171,9 @@ class BoilerMonitorCard extends HTMLElement {
       body = `
         <div class="crow">
           ${this._mini("cycles_per_hour", t.cycles_h, fmt(s.cycles_per_hour, 1), "", s.short_cycles_today ? "warn" : "")}
-          ${this._mini("avg_burn", t.avg_burn, fmt(s.avg_burn_min, 0), t.min)}
+          ${this._mini("avg_burn", t.avg_burn, ...durTile(s.avg_burn_min))}
           ${a.sources?.return ? this._mini("condensing_ratio", t.cond, fmt(s.condensing_ratio, 0), "%", this._condCls(s.condensing_ratio)) : this._mini("duty_cycle", t.duty, fmt(s.duty_cycle, 0), "%")}
-          ${a.sources?.flow && a.sources?.return ? this._mini("delta_t", t.dt, fmt(s.delta_t, 1), "°") : this._mini("burn_time_today", t.burn_today, fmt(s.burn_hours_today, 1), t.h)}
+          ${a.sources?.flow && a.sources?.return ? this._mini("delta_t", t.dt, fmt(s.delta_t, 1), "°") : this._mini("burn_time_today", t.burn_today, ...durTile(s.burn_hours_today == null ? null : s.burn_hours_today * 60))}
         </div>
         ${this._timeline(a, true)}`;
     } else {
@@ -169,10 +189,10 @@ class BoilerMonitorCard extends HTMLElement {
       const tiles = [
         ["cycles_today", t.cycles_today, fmt(s.cycles_today, 0), s.short_cycles_today ? `${s.short_cycles_today} ${t.short}` : "", s.short_cycles_today ? "warn" : ""],
         ["cycles_per_hour", t.cycles_h, fmt(s.cycles_per_hour, 2), "", (s.cycles_per_hour ?? 0) > 3 ? "warn" : ""],
-        ["avg_burn", t.avg_burn, fmt(s.avg_burn_min, 1), t.min, ""],
-        ["avg_off", t.avg_off, fmt(s.avg_off_min, 1), t.min, ""],
+        ["avg_burn", t.avg_burn, ...durTile(s.avg_burn_min), ""],
+        ["avg_off", t.avg_off, ...durTile(s.avg_off_min), ""],
         ["duty_cycle", t.duty, fmt(s.duty_cycle, 0), "%", ""],
-        ["burn_time_today", t.burn_today, fmt(s.burn_hours_today, 2), t.h, ""],
+        ["burn_time_today", t.burn_today, ...durTile(s.burn_hours_today == null ? null : s.burn_hours_today * 60), ""],
         a.sources?.return && ["condensing_ratio", t.cond, fmt(s.condensing_ratio, 0), "%", this._condCls(s.condensing_ratio)],
         a.entities?.heating_rate && ["heating_rate", t.rate, fmt(s.heating_rate, 2), "°C/h", (s.heating_rate ?? 1) <= 0 ? "warn" : ""],
       ].filter(Boolean);
@@ -248,8 +268,8 @@ class BoilerMonitorCard extends HTMLElement {
     const bars = days.map((d) => {
       const h = (d.burn_h / max) * 100;
       const dd = d.date.slice(8, 10);
-      const tip = `${d.date}: ${fmt(d.burn_h, 1)} h · ${d.cycles} cyc${d.short ? ` (${d.short} ${t.short})` : ""}${d.outdoor != null ? ` · ${fmt(d.outdoor, 1)}°C` : ""}${d.cond_pct != null ? ` · ${fmt(d.cond_pct, 0)}%` : ""}`;
-      return `<div class="bar" title="${esc(tip)}"><div class="bv">${fmt(d.burn_h, 1)}</div>
+      const tip = `${d.date}: ${durText(d.burn_h * 60)} · ${d.cycles} cyc${d.short ? ` (${d.short} ${t.short})` : ""}${d.outdoor != null ? ` · ${fmt(d.outdoor, 1)}°C` : ""}${d.cond_pct != null ? ` · ${fmt(d.cond_pct, 0)}%` : ""}`;
+      return `<div class="bar" title="${esc(tip)}"><div class="bv">${durShort(d.burn_h * 60)}</div>
         <div class="bcol"><div class="bf ${d.short ? "has-short" : ""}" style="height:${h}%"></div></div>
         <div class="bd">${dd}</div>${d.outdoor != null ? `<div class="bo">${fmt(d.outdoor, 0)}°</div>` : ""}</div>`;
     }).join("");
@@ -272,7 +292,7 @@ class BoilerMonitorCard extends HTMLElement {
     const X = (v) => P.l + ((v - xmin) / (xmax - xmin)) * (W - P.l - P.r);
     const Y = (v) => H - P.b - (v / ymax) * (H - P.t - P.b);
     const dots = pts.map((p, i) => `<circle cx="${X(p.outdoor).toFixed(1)}" cy="${Y(p.burn_h).toFixed(1)}" r="3.5"
-      class="dot" style="opacity:${(0.35 + 0.65 * (i + 1) / pts.length).toFixed(2)}"><title>${esc(p.date)}: ${fmt(p.outdoor)}°C → ${fmt(p.burn_h, 2)} h</title></circle>`).join("");
+      class="dot" style="opacity:${(0.35 + 0.65 * (i + 1) / pts.length).toFixed(2)}"><title>${esc(p.date)}: ${fmt(p.outdoor)}°C → ${durText(p.burn_h * 60)}</title></circle>`).join("");
     let line = "", bp = "";
     if (reg) {
       const f = (x) => reg.intercept + reg.slope * x;
@@ -298,7 +318,7 @@ class BoilerMonitorCard extends HTMLElement {
     const perHdd = a.stats?.burn_per_hdd;
     const foot = `<div class="cfoot">
       ${reg?.balance_point != null ? `<span data-ent="${esc(a.entities?.balance_point || "")}"><b>${fmt(reg.balance_point, 1)}°C</b> ${esc(t.balance)}</span>` : ""}
-      ${perHdd != null ? `<span data-ent="${esc(a.entities?.burn_per_hdd || "")}"><b>${fmt(perHdd, 2)}</b> ${esc(t.per_hdd)}</span>` : ""}
+      ${perHdd != null ? `<span data-ent="${esc(a.entities?.burn_per_hdd || "")}"><b>${fmt(perHdd * 60, 0)}</b> ${esc(t.per_hdd)}</span>` : ""}
       ${reg ? `<span class="muted">R² ${fmt(reg.r2, 2)} · n=${reg.n}</span>` : ""}</div>`;
     return `${head}<svg class="corr" viewBox="0 0 ${W} ${H}">${axes}${bp}${line}${dots}</svg>${foot}`;
   }
@@ -369,6 +389,7 @@ const STYLE = `
   .bars { display: flex; gap: 3px; align-items: stretch; height: 110px; }
   .bar { flex: 1; display: flex; flex-direction: column; align-items: center; min-width: 0; }
   .bv { font-size: 9px; color: var(--secondary-text-color); height: 12px; }
+  @container (max-width: 400px) { .bv { visibility: hidden; } }
   .bcol { flex: 1; width: 100%; display: flex; align-items: flex-end; }
   .bf { width: 100%; background: var(--bm-burn); border-radius: 3px 3px 0 0; min-height: 1px; opacity: .85; }
   .bf.has-short { box-shadow: inset 0 3px 0 var(--bm-short); }

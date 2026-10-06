@@ -171,7 +171,7 @@ The compact card shows the status, active alerts as icons, four key numbers and 
 6. **Last 14 days**: burn hours per day, with the date and average outdoor temperature underneath. A red cap marks days with short cycles.
 7. **Burn vs outdoor**: one dot per full day (newer days are more opaque), the regression line, the balance point (green line), burn per degree-day and R².
 
-Tapping any value opens the more-info dialog of the underlying entity. The card follows your theme (light/dark), works in both masonry and sections views, and has a visual editor.
+Durations are shown in hours and minutes (e.g. `2 h 14 min`, `45 min`), never as decimal hours. Tapping any value opens the more-info dialog of the underlying entity. The card follows your theme (light/dark), works in both masonry and sections views, and has a visual editor.
 
 A complete example dashboard view is in [`examples/dashboard.yaml`](examples/dashboard.yaml).
 
