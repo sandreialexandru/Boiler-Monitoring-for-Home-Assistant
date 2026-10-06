@@ -209,6 +209,24 @@ Hover any bar, dot or timeline segment with the mouse, or **tap** it on a phone 
   <img src="docs/images/tooltip-curve.png" width="300" alt="Heating-curve tooltip">
 </p>
 
+### Zooming the charts
+
+The **Heating curve / Fixed flow** and **Burn vs outdoor** charts can be zoomed, so points that sit on top of each other can be told apart.
+
+| | Mouse | Touch (phone, wall tablet) |
+|---|---|---|
+| Zoom into an area | drag a box over it | pinch with two fingers |
+| Zoom in on a spot | double-click | double-tap |
+| Move around when zoomed | – (use the box or the buttons) | drag with one finger |
+| Zoom with the wheel | **Ctrl/⌘ + wheel** (the plain wheel keeps scrolling the dashboard) | – |
+| Buttons (top-right of the chart) | **+** zoom in, **−** zoom out, **⟲** reset | same |
+
+**Overlapping points.** Hovering or tapping lists **every point under your finger**, not just the top one: up to three are shown in full, with "+N more" for the rest. A ring marks the closest point. Zoom in to separate them.
+
+The zoom stays as you left it while the card refreshes with new data. It resets when the page is reloaded.
+
+<p align="center"><img src="docs/images/zoom-curve.png" width="420" alt="Zoomed heating curve"></p>
+
 A complete example dashboard view is in [`examples/dashboard.yaml`](examples/dashboard.yaml).
 
 ## Reading the card: a plain-language guide
