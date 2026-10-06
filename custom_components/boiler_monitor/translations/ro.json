@@ -10,8 +10,11 @@
           "burner_on_state": "Starea care înseamnă „arzător pornit” (text)",
           "flow_temp_entity": "Senzor temperatură tur (°C) – opțional",
           "return_temp_entity": "Senzor temperatură retur (°C) – opțional",
+          "flow_setpoint_entity": "Senzor tur cerut / setpoint (°C) – opțional",
+          "thermoregulation_entity": "Entitate termoreglare automată – opțional",
           "outdoor_temp_entity": "Senzor temperatură exterioară (°C) – opțional",
           "indoor_temp_entities": "Senzori temperatură interioară (°C) – opțional",
+          "pressure_entity": "Senzor presiune circuit încălzire (bar) – opțional",
           "season_entity": "Entitate sezon de încălzire – opțional",
           "season_state": "Starea care înseamnă „sezon de încălzire activ” (text)"
         },
@@ -21,8 +24,11 @@
           "burner_on_state": "Starea exactă care înseamnă „arzător pornit”: „on” pentru switch / binary_sensor / input_boolean, „heating” pentru climate, sau textul exact al stării unui senzor.",
           "flow_temp_entity": "Temperatura apei calde care iese din centrală spre calorifere, în °C. Necesar pentru ΔT tur-retur.",
           "return_temp_entity": "Temperatura apei care se întoarce de la calorifere în centrală, în °C. Necesar pentru procentul de condensare și alerta „Condensare pierdută”.",
+          "flow_setpoint_entity": "Temperatura de tur pe care o urmărește centrala, în °C – ex. „Ariston CH flow setpoint temp”. Cu termoreglarea automată PORNITĂ urmează curba de compensare climatică; OPRITĂ, e temperatura de tur fixă setată de tine. Activează comparația tur real vs cerut și graficul curbei.",
+          "thermoregulation_entity": "Comutatorul care pornește/oprește compensarea climatică a centralei – ex. „Ariston automatic thermoregulation”. PORNIT = turul cerut urmează temperatura exterioară (curbă); OPRIT = tur fix. Cardul și graficele se adaptează la mod.",
           "outdoor_temp_entity": "Temperatura aerului de afară, în °C. Necesar pentru corelarea cu exteriorul, punctul de echilibru și orele de ardere pe grad-zi.",
           "indoor_temp_entities": "Unul sau mai mulți senzori de cameră, în °C. Media lor (senzorii indisponibili sunt ignorați) arată dacă încălzirea chiar încălzește casa.",
+          "pressure_entity": "Presiunea apei din circuitul de încălzire, în bar – ex. „Ariston heating circuit pressure”. Activează alerta de presiune mică/mare și tendința pe 7 zile (detectare scurgeri lente). Monitorizată tot anul.",
           "season_entity": "Opțional. Cât timp această entitate NU e în starea de mai jos, monitorizarea e pe pauză (nu se numără cicluri, nu se trimit alerte) – util vara, când centrala face doar apă caldă. Lasă gol pentru monitorizare tot anul.",
           "season_state": "Starea entității de sezon care înseamnă „sezon de încălzire activ”, ex. „on” (input_boolean / switch), „heat” (climate) sau textul exact al opțiunii unui input_select. Ignorat dacă nu e aleasă o entitate de sezon."
         }
@@ -34,8 +40,11 @@
           "burner_on_state": "Starea care înseamnă „arzător pornit” (text)",
           "flow_temp_entity": "Senzor temperatură tur (°C) – opțional",
           "return_temp_entity": "Senzor temperatură retur (°C) – opțional",
+          "flow_setpoint_entity": "Senzor tur cerut / setpoint (°C) – opțional",
+          "thermoregulation_entity": "Entitate termoreglare automată – opțional",
           "outdoor_temp_entity": "Senzor temperatură exterioară (°C) – opțional",
           "indoor_temp_entities": "Senzori temperatură interioară (°C) – opțional",
+          "pressure_entity": "Senzor presiune circuit încălzire (bar) – opțional",
           "season_entity": "Entitate sezon de încălzire – opțional",
           "season_state": "Starea care înseamnă „sezon de încălzire activ” (text)"
         },
@@ -44,8 +53,11 @@
           "burner_on_state": "Starea exactă care înseamnă „arzător pornit”: „on” pentru switch / binary_sensor / input_boolean, „heating” pentru climate, sau textul exact al stării unui senzor.",
           "flow_temp_entity": "Temperatura apei calde care iese din centrală spre calorifere, în °C. Necesar pentru ΔT tur-retur.",
           "return_temp_entity": "Temperatura apei care se întoarce de la calorifere în centrală, în °C. Necesar pentru procentul de condensare și alerta „Condensare pierdută”.",
+          "flow_setpoint_entity": "Temperatura de tur pe care o urmărește centrala, în °C – ex. „Ariston CH flow setpoint temp”. Cu termoreglarea automată PORNITĂ urmează curba de compensare climatică; OPRITĂ, e temperatura de tur fixă setată de tine. Activează comparația tur real vs cerut și graficul curbei.",
+          "thermoregulation_entity": "Comutatorul care pornește/oprește compensarea climatică a centralei – ex. „Ariston automatic thermoregulation”. PORNIT = turul cerut urmează temperatura exterioară (curbă); OPRIT = tur fix. Cardul și graficele se adaptează la mod.",
           "outdoor_temp_entity": "Temperatura aerului de afară, în °C. Necesar pentru corelarea cu exteriorul, punctul de echilibru și orele de ardere pe grad-zi.",
           "indoor_temp_entities": "Unul sau mai mulți senzori de cameră, în °C. Media lor (senzorii indisponibili sunt ignorați) arată dacă încălzirea chiar încălzește casa.",
+          "pressure_entity": "Presiunea apei din circuitul de încălzire, în bar – ex. „Ariston heating circuit pressure”. Activează alerta de presiune mică/mare și tendința pe 7 zile (detectare scurgeri lente). Monitorizată tot anul.",
           "season_entity": "Opțional. Cât timp această entitate NU e în starea de mai jos, monitorizarea e pe pauză (nu se numără cicluri, nu se trimit alerte) – util vara, când centrala face doar apă caldă. Lasă gol pentru monitorizare tot anul.",
           "season_state": "Starea entității de sezon care înseamnă „sezon de încălzire activ”, ex. „on” (input_boolean / switch), „heat” (climate) sau textul exact al opțiunii unui input_select. Ignorat dacă nu e aleasă o entitate de sezon."
         }
@@ -67,6 +79,8 @@
           "effect_check_minutes": "Întârziere verificare efect termic (minute)",
           "min_temp_rise": "Creștere minimă așteptată în camere (°C)",
           "min_burn_seconds": "Ignoră arderile mai scurte de (secunde)",
+          "pressure_min": "Presiune minimă (bar)",
+          "pressure_max": "Presiune maximă (bar)",
           "notify_service": "Serviciu de notificare (text) – opțional",
           "csv_log": "Scrie jurnal CSV (pornit/oprit)"
         },
@@ -77,6 +91,8 @@
           "effect_check_minutes": "În minute. După cât timp de la pornirea arzătorului se verifică din nou temperatura din camere. 30–45 pentru calorifere, 90–120 pentru încălzire în pardoseală. Implicit 45 min.",
           "min_temp_rise": "În °C. Dacă media camerelor a crescut mai puțin de atât până la verificare, apare „Încălzire ineficientă” (ex. aer în calorifere, robineți închiși, tur prea rece). Implicit 0,2 °C.",
           "min_burn_seconds": "În secunde. Arderile mai scurte de atât sunt considerate impulsuri false de releu sau aprinderi ratate și sunt eliminate complet din statistici. Implicit 20 s.",
+          "pressure_min": "În bar. Sub această valoare apare alerta „Problemă presiune” (trebuie completată apa). Presiunea normală la rece e 1,0–1,5 bar. Implicit 1,0 bar.",
+          "pressure_max": "În bar. Peste această valoare apare alerta „Problemă presiune” (vas de expansiune / prea multă apă). Supapa de siguranță deschide pe la 3 bar. Implicit 2,5 bar.",
           "notify_service": "Unde se trimit alertele push, ex. notify.mobile_app_telefon (sau o entitate notify). Gol = fără notificări push – evenimentele și binary sensor-ii funcționează oricum. Maxim o alertă pe oră pentru fiecare tip.",
           "csv_log": "Când e pornit, fiecare eveniment START / STOP / SHORT_CYCLE / RETURN_HOT / INEFFECTIVE e adăugat într-un fișier CSV în /config/boiler_monitor/ (câte un fișier pentru fiecare centrală)."
         }
@@ -132,6 +148,22 @@
       },
       "burn_per_hdd": {
         "name": "Ore ardere pe grad-zi (7z)"
+      },
+      "regulation_mode": {
+        "name": "Mod reglare",
+        "state": {
+          "weather_compensation": "Compensare climatică",
+          "fixed": "Tur fix"
+        }
+      },
+      "flow_deviation": {
+        "name": "Tur real vs cerut (24h)"
+      },
+      "curve_slope": {
+        "name": "Panta curbei de încălzire"
+      },
+      "pressure_change_7d": {
+        "name": "Variație presiune (7z)"
       }
     },
     "binary_sensor": {
@@ -146,6 +178,9 @@
       },
       "heating_ineffective": {
         "name": "Încălzire ineficientă"
+      },
+      "pressure_problem": {
+        "name": "Problemă presiune"
       }
     }
   },

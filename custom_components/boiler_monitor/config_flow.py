@@ -14,6 +14,7 @@ from .const import (
     CONF_BURNER_ON_STATE,
     CONF_CSV_LOG,
     CONF_EFFECT_DELAY_MIN,
+    CONF_FLOW_SETPOINT,
     CONF_FLOW_TEMP,
     CONF_INDOOR_TEMPS,
     CONF_MIN_BURN_SECONDS,
@@ -21,18 +22,24 @@ from .const import (
     CONF_NAME,
     CONF_NOTIFY_SERVICE,
     CONF_OUTDOOR_TEMP,
+    CONF_PRESSURE,
+    CONF_PRESSURE_MAX,
+    CONF_PRESSURE_MIN,
     CONF_RETURN_HOT_MINUTES,
     CONF_RETURN_TEMP,
     CONF_RETURN_THRESHOLD,
     CONF_SEASON_ENTITY,
     CONF_SEASON_STATE,
     CONF_SHORT_CYCLE_MIN,
+    CONF_THERMOREG,
     DEFAULT_BURNER_ON_STATE,
     DEFAULT_CSV_LOG,
     DEFAULT_EFFECT_DELAY_MIN,
     DEFAULT_MIN_BURN_SECONDS,
     DEFAULT_MIN_RISE,
     DEFAULT_NOTIFY_SERVICE,
+    DEFAULT_PRESSURE_MAX,
+    DEFAULT_PRESSURE_MIN,
     DEFAULT_RETURN_HOT_MINUTES,
     DEFAULT_RETURN_THRESHOLD,
     DEFAULT_SEASON_STATE,
@@ -67,9 +74,16 @@ def entities_schema(src: dict[str, Any], with_name: bool) -> vol.Schema:
             ): sel.TextSelector(),
             _opt(CONF_FLOW_TEMP, src): TEMP_SENSOR,
             _opt(CONF_RETURN_TEMP, src): TEMP_SENSOR,
+            _opt(CONF_FLOW_SETPOINT, src): TEMP_SENSOR,
+            _opt(CONF_THERMOREG, src): sel.EntitySelector(
+                sel.EntitySelectorConfig(domain=["switch", "binary_sensor", "input_boolean"])
+            ),
             _opt(CONF_OUTDOOR_TEMP, src): TEMP_SENSOR,
             _opt(CONF_INDOOR_TEMPS, src): sel.EntitySelector(
                 sel.EntitySelectorConfig(domain="sensor", device_class="temperature", multiple=True)
+            ),
+            _opt(CONF_PRESSURE, src): sel.EntitySelector(
+                sel.EntitySelectorConfig(domain="sensor", device_class="pressure")
             ),
             _opt(CONF_SEASON_ENTITY, src): sel.EntitySelector(sel.EntitySelectorConfig()),
             vol.Optional(
@@ -98,6 +112,8 @@ def options_schema(src: dict[str, Any]) -> vol.Schema:
             vol.Required(CONF_EFFECT_DELAY_MIN, default=g(CONF_EFFECT_DELAY_MIN, DEFAULT_EFFECT_DELAY_MIN)): _num(10, 240, 5, "min"),
             vol.Required(CONF_MIN_RISE, default=g(CONF_MIN_RISE, DEFAULT_MIN_RISE)): _num(0.1, 3, 0.1, "°C"),
             vol.Required(CONF_MIN_BURN_SECONDS, default=g(CONF_MIN_BURN_SECONDS, DEFAULT_MIN_BURN_SECONDS)): _num(0, 300, 5, "s"),
+            vol.Required(CONF_PRESSURE_MIN, default=g(CONF_PRESSURE_MIN, DEFAULT_PRESSURE_MIN)): _num(0.3, 2.0, 0.1, "bar"),
+            vol.Required(CONF_PRESSURE_MAX, default=g(CONF_PRESSURE_MAX, DEFAULT_PRESSURE_MAX)): _num(1.5, 3.5, 0.1, "bar"),
             vol.Optional(CONF_NOTIFY_SERVICE, description={"suggested_value": g(CONF_NOTIFY_SERVICE, DEFAULT_NOTIFY_SERVICE)}): sel.TextSelector(),
             vol.Required(CONF_CSV_LOG, default=g(CONF_CSV_LOG, DEFAULT_CSV_LOG)): sel.BooleanSelector(),
         }

@@ -30,6 +30,7 @@ from .const import (
     CONF_BURNER_ON_STATE,
     CONF_CSV_LOG,
     CONF_EFFECT_DELAY_MIN,
+    CONF_FLOW_SETPOINT,
     CONF_FLOW_TEMP,
     CONF_INDOOR_TEMPS,
     CONF_MIN_BURN_SECONDS,
@@ -37,12 +38,16 @@ from .const import (
     CONF_NAME,
     CONF_NOTIFY_SERVICE,
     CONF_OUTDOOR_TEMP,
+    CONF_PRESSURE,
+    CONF_PRESSURE_MAX,
+    CONF_PRESSURE_MIN,
     CONF_RETURN_HOT_MINUTES,
     CONF_RETURN_TEMP,
     CONF_RETURN_THRESHOLD,
     CONF_SEASON_ENTITY,
     CONF_SEASON_STATE,
     CONF_SHORT_CYCLE_MIN,
+    CONF_THERMOREG,
     CYCLE_RETENTION_HOURS,
     DAILY_RETENTION_DAYS,
     DEFAULT_BURNER_ON_STATE,
@@ -51,6 +56,8 @@ from .const import (
     DEFAULT_MIN_BURN_SECONDS,
     DEFAULT_MIN_RISE,
     DEFAULT_NOTIFY_SERVICE,
+    DEFAULT_PRESSURE_MAX,
+    DEFAULT_PRESSURE_MIN,
     DEFAULT_RETURN_HOT_MINUTES,
     DEFAULT_RETURN_THRESHOLD,
     DEFAULT_SEASON_STATE,
@@ -59,6 +66,10 @@ from .const import (
     EVENT_CONDENSATION_LOST,
     EVENT_CYCLE_END,
     EVENT_INEFFECTIVE,
+    EVENT_PRESSURE,
+    EVENT_REGULATION,
+    MODE_CURVE,
+    MODE_FIXED,
     EVENT_SHORT_CYCLE,
     SAMPLE_INTERVAL_SECONDS,
     SIGNAL_UPDATE,
@@ -71,6 +82,8 @@ from .const import (
 
 _LOGGER = logging.getLogger(__name__)
 
+FLOW_SETTLE_S = 300  # ignore the first minutes of a burn for flow-vs-target
+CURVE_HOURS = 7 * 24
 HDD_BASE = 18.0  # °C, base temperature for heating degree-days
 ALERT_THROTTLE_S = 3600
 BAD_STATES = (STATE_UNAVAILABLE, STATE_UNKNOWN, None, "", "none")
@@ -106,7 +119,20 @@ def _new_bucket() -> dict[str, float]:
         "out_n": 0,
         "dt_sum": 0.0,  # flow-return while burning
         "dt_n": 0,
+        "tgt_sum": 0.0,  # flow target (setpoint), sampled all the time in season
+        "tgt_n": 0,
+        "th_n": 0,  # of those, samples with thermoregulation ON
+        "fl_sum": 0.0,  # actual flow while burning (after settle time)
+        "fl_n": 0,
+        "dev_sum": 0.0,  # flow - target while burning (after settle time)
+        "dev_n": 0,
+        "p_sum": 0.0,  # pressure, sampled all year
+        "p_n": 0,
     }
+
+
+def _add(b: dict[str, float], key: str, val: float) -> None:
+    b[key] = b.get(key, 0) + val
 
 
 class BoilerMonitor:
@@ -136,6 +162,9 @@ class BoilerMonitor:
         self.season_active = True
         self.burner_on = False
         self.burner_available = True
+        self.pressure_problem = False
+        self._last_mode: str | None = None
+        self._last_setpoint: float | None = None
         self._stats_cache: dict[str, Any] | None = None
         self._csv_buf: list[str] = []
         self._csv_flushing = False
@@ -193,6 +222,19 @@ class BoilerMonitor:
         self._unsubs.append(
             async_track_state_change_event(self.hass, watched, self._on_state_event)
         )
+        regulation = [e for e in (cfg.get(CONF_THERMOREG), cfg.get(CONF_FLOW_SETPOINT)) if e]
+        if regulation:
+            self._last_mode = self.regulation_mode
+            self._last_setpoint = self.flow_target()
+            self._unsubs.append(
+                async_track_state_change_event(self.hass, regulation, self._on_regulation_event)
+            )
+        if cfg.get(CONF_PRESSURE):
+            self._unsubs.append(
+                async_track_state_change_event(
+                    self.hass, [cfg[CONF_PRESSURE]], self._on_pressure_event
+                )
+            )
         if cfg.get(CONF_RETURN_TEMP):
             self._unsubs.append(
                 async_track_state_change_event(
@@ -259,6 +301,23 @@ class BoilerMonitor:
         ]
         return sum(vals) / len(vals) if vals else None
 
+    def flow_target(self) -> float | None:
+        return self._state_val(self.cfg.get(CONF_FLOW_SETPOINT))
+
+    def pressure(self) -> float | None:
+        return self._state_val(self.cfg.get(CONF_PRESSURE))
+
+    @property
+    def regulation_mode(self) -> str | None:
+        """weather_compensation / fixed, or None when not configured/unknown."""
+        ent = self.cfg.get(CONF_THERMOREG)
+        if not ent:
+            return None
+        st = self.hass.states.get(ent)
+        if st is None or st.state in (STATE_UNAVAILABLE, STATE_UNKNOWN):
+            return self._last_mode
+        return MODE_CURVE if st.state.lower() in ("on", "true", "1") else MODE_FIXED
+
     def delta_t(self) -> float | None:
         f, r = self.flow_temp(), self.return_temp()
         return None if f is None or r is None else f - r
@@ -312,10 +371,65 @@ class BoilerMonitor:
         self._notify_entities()
 
     @callback
+    def _on_regulation_event(self, event: Event) -> None:
+        now = dt_util.utcnow().timestamp()
+        mode = self.regulation_mode
+        target = self.flow_target()
+        if mode is not None and mode != self._last_mode:
+            self._csv(now, "MODE", extra=f"mode={mode};target={target}")
+            self.hass.bus.async_fire(
+                EVENT_REGULATION,
+                {"entry_id": self.entry.entry_id, "name": self.name, "mode": mode, "target": target},
+            )
+            self._last_mode = mode
+        # In fixed mode the setpoint is a user setting -> log changes.
+        # With weather compensation it moves with the outdoor temperature.
+        if (
+            target is not None
+            and self._last_setpoint is not None
+            and abs(target - self._last_setpoint) >= 0.5
+            and mode != MODE_CURVE
+        ):
+            self._csv(now, "SETPOINT", extra=f"from={self._last_setpoint};to={target}")
+        if target is not None:
+            self._last_setpoint = target
+        self._notify_entities()
+
+    @callback
+    def _on_pressure_event(self, event: Event) -> None:
+        self._check_pressure(dt_util.utcnow().timestamp())
+        self._notify_entities()
+
+    def _check_pressure(self, now: float) -> None:
+        p = self.pressure()
+        if p is None:
+            return
+        lo = float(self._opt(CONF_PRESSURE_MIN, DEFAULT_PRESSURE_MIN))
+        hi = float(self._opt(CONF_PRESSURE_MAX, DEFAULT_PRESSURE_MAX))
+        if not self.pressure_problem and (p < lo or p > hi):
+            self.pressure_problem = True
+            kind = "low" if p < lo else "high"
+            self._csv(now, "PRESSURE", extra=f"{kind}={p}")
+            self.hass.bus.async_fire(
+                EVENT_PRESSURE,
+                {"entry_id": self.entry.entry_id, "name": self.name, "pressure": p, "kind": kind},
+            )
+            self._notify(
+                "pressure",
+                f"⚠️ {self.name}: pressure {'low' if kind == 'low' else 'high'}",
+                f"Heating circuit pressure is {p:.2f} bar "
+                f"(allowed {lo:.1f}–{hi:.1f} bar).",
+            )
+        elif self.pressure_problem and lo + 0.05 <= p <= hi - 0.05:
+            self.pressure_problem = False
+
+    @callback
     def _on_tick(self, _now: datetime) -> None:
         now = dt_util.utcnow().timestamp()
         dt = min(now - self._last_tick, SAMPLE_INTERVAL_SECONDS * 2)
         self._last_tick = now
+        self._sample_pressure(now)
+        self._check_pressure(now)
         if self.season_active:
             self._sample(now, dt)
             self._account_burn(now)
@@ -547,8 +661,8 @@ class BoilerMonitor:
         b = self._bucket(now)
         out = self.outdoor_temp()
         if out is not None:
-            b["out_sum"] += out
-            b["out_n"] += 1
+            _add(b, "out_sum", out)
+            _add(b, "out_n", 1)
         if self.burner_on and self._open_cycle() is not None:
             ret = self.return_temp()
             if ret is not None:
@@ -559,8 +673,29 @@ class BoilerMonitor:
                 b["ret_max"] = max(b.get("ret_max", ret), ret)
             d = self.delta_t()
             if d is not None:
-                b["dt_sum"] += d
-                b["dt_n"] += 1
+                _add(b, "dt_sum", d)
+                _add(b, "dt_n", 1)
+            cyc = self._open_cycle()
+            flow, target = self.flow_temp(), self.flow_target()
+            if flow is not None and cyc is not None and now - cyc["start"] >= FLOW_SETTLE_S:
+                _add(b, "fl_sum", flow)
+                _add(b, "fl_n", 1)
+                if target is not None:
+                    _add(b, "dev_sum", flow - target)
+                    _add(b, "dev_n", 1)
+        target = self.flow_target()
+        if target is not None:
+            _add(b, "tgt_sum", target)
+            _add(b, "tgt_n", 1)
+            if self.regulation_mode == MODE_CURVE:
+                _add(b, "th_n", 1)
+
+    def _sample_pressure(self, now: float) -> None:
+        p = self.pressure()
+        if p is not None:
+            b = self._bucket(now)
+            _add(b, "p_sum", p)
+            _add(b, "p_n", 1)
 
     def _prune(self, now: float) -> None:
         cut_c = now - CYCLE_RETENTION_HOURS * 3600
@@ -590,6 +725,68 @@ class BoilerMonitor:
 
     def _sum_hours(self, start: float, end: float, field: str) -> float:
         return sum(v.get(field, 0) for k, v in self.hours.items() if start <= k < end)
+
+    def _avg_hours(self, start: float, end: float, sum_f: str, n_f: str) -> float | None:
+        n = self._sum_hours(start, end, n_f)
+        return _r(self._sum_hours(start, end, sum_f) / n) if n else None
+
+    def curve_points(self, hours: int = CURVE_HOURS) -> list[list[Any]]:
+        """Per hour: [outdoor avg, target avg, actual flow avg (burning) | None, mode 1=curve 0=fixed]."""
+        now = dt_util.utcnow().timestamp()
+        out = []
+        for k in sorted(self.hours):
+            if k < now - hours * 3600:
+                continue
+            v = self.hours[k]
+            if not v.get("tgt_n") or not v.get("out_n"):
+                continue
+            out.append(
+                [
+                    round(v["out_sum"] / v["out_n"], 1),
+                    round(v["tgt_sum"] / v["tgt_n"], 1),
+                    round(v["fl_sum"] / v["fl_n"], 1) if v.get("fl_n") else None,
+                    1 if v.get("th_n", 0) * 2 >= v["tgt_n"] else 0,
+                ]
+            )
+        return out
+
+    def curve_fit(self) -> dict[str, float] | None:
+        """Linear fit target = a + b*outdoor over weather-compensated hours."""
+        pts = [(p[0], p[1]) for p in self.curve_points() if p[3] == 1]
+        if len(pts) < 6:
+            return None
+        n = len(pts)
+        mx = sum(p[0] for p in pts) / n
+        my = sum(p[1] for p in pts) / n
+        sxx = sum((p[0] - mx) ** 2 for p in pts)
+        if max(p[0] for p in pts) - min(p[0] for p in pts) < 3:
+            return None  # outdoor range too narrow for a meaningful slope
+        sxy = sum((p[0] - mx) * (p[1] - my) for p in pts)
+        b = sxy / sxx
+        a = my - b * mx
+        syy = sum((p[1] - my) ** 2 for p in pts)
+        return {
+            "slope": round(-b, 2),  # °C of flow per °C colder outside (positive)
+            "intercept": round(a, 2),
+            "raw_slope": round(b, 3),
+            "at_0": round(a, 1),
+            "at_minus_10": round(a - 10 * b, 1),
+            "r2": round((sxy * sxy) / (sxx * syy), 2) if syy > 0 else 1.0,
+            "n": n,
+        }
+
+    def pressure_change(self) -> float | None:
+        """Mean of the last 24 h minus mean of the oldest day in the last 7 days."""
+        now = dt_util.utcnow().timestamp()
+        keys = sorted(k for k, v in self.hours.items() if v.get("p_n") and k >= now - 7 * 86400)
+        if not keys or keys[-1] - keys[0] < 2 * 86400:
+            return None
+        def mean(ks: list[int]) -> float | None:
+            n = sum(self.hours[k]["p_n"] for k in ks)
+            return sum(self.hours[k]["p_sum"] for k in ks) / n if n else None
+        old = mean([k for k in keys if k < keys[0] + 86400])
+        new = mean([k for k in keys if k >= now - 86400])
+        return None if old is None or new is None else round(new - old, 2)
 
     def _max_hours(self, start: float, end: float, field: str) -> float | None:
         vals = [v[field] for k, v in self.hours.items() if start <= k < end and field in v]
@@ -639,6 +836,12 @@ class BoilerMonitor:
             "current_burn_min": _r((now - open_c["start"]) / 60) if open_c else None,
             "condensing_ratio": _r(100 * cond / smp) if smp >= 300 else None,
             "condensing_minutes": round(cond / 60),
+            "flow_target": _r(self.flow_target()),
+            "flow_deviation": self._avg_hours(h_start, now + 1, "dev_sum", "dev_n"),
+            "regulation_mode": self.regulation_mode,
+            "curve_slope": (cf := self.curve_fit()) and cf.get("slope"),
+            "pressure": _r(self.pressure(), 2),
+            "pressure_change_7d": self.pressure_change(),
             "burning_sampled_minutes": round(smp / 60),
             "return_max_24h": _r(self._max_hours(h_start, now + 1, "ret_max")),
             "delta_t": _r(self.delta_t()),

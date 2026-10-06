@@ -10,17 +10,22 @@ from homeassistant.components.sensor import (
     SensorEntityDescription,
     SensorStateClass,
 )
-from homeassistant.const import PERCENTAGE, UnitOfTemperature, UnitOfTime
+from homeassistant.const import PERCENTAGE, UnitOfPressure, UnitOfTemperature, UnitOfTime
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import (
+    CONF_FLOW_SETPOINT,
     CONF_FLOW_TEMP,
     CONF_INDOOR_TEMPS,
     CONF_OUTDOOR_TEMP,
+    CONF_PRESSURE,
     CONF_RETURN_TEMP,
+    CONF_THERMOREG,
     DOMAIN,
+    MODE_CURVE,
+    MODE_FIXED,
     STATUS_HEATING,
     STATUS_IDLE,
     STATUS_OFF_SEASON,
@@ -50,6 +55,10 @@ SENSORS: tuple[BoilerSensorDescription, ...] = (
     BoilerSensorDescription(key="delta_t", stat="delta_t", translation_key="delta_t", icon="mdi:thermometer-lines", device_class=SensorDeviceClass.TEMPERATURE, state_class=M, native_unit_of_measurement=UnitOfTemperature.CELSIUS, suggested_display_precision=1),
     BoilerSensorDescription(key="heating_rate", stat="heating_rate", translation_key="heating_rate", icon="mdi:home-thermometer", state_class=M, native_unit_of_measurement="°C/h", suggested_display_precision=2),
     BoilerSensorDescription(key="balance_point", stat="balance_point", translation_key="balance_point", icon="mdi:scale-balance", device_class=SensorDeviceClass.TEMPERATURE, native_unit_of_measurement=UnitOfTemperature.CELSIUS, suggested_display_precision=1),
+    BoilerSensorDescription(key="regulation_mode", stat="regulation_mode", translation_key="regulation_mode", icon="mdi:chart-bell-curve-cumulative", device_class=SensorDeviceClass.ENUM, options=[MODE_CURVE, MODE_FIXED]),
+    BoilerSensorDescription(key="flow_deviation", stat="flow_deviation", translation_key="flow_deviation", icon="mdi:thermometer-chevron-up", device_class=SensorDeviceClass.TEMPERATURE, state_class=M, native_unit_of_measurement=UnitOfTemperature.CELSIUS, suggested_display_precision=1),
+    BoilerSensorDescription(key="curve_slope", stat="curve_slope", translation_key="curve_slope", icon="mdi:slope-uphill", state_class=M, native_unit_of_measurement="°C/°C", suggested_display_precision=2),
+    BoilerSensorDescription(key="pressure_change_7d", stat="pressure_change_7d", translation_key="pressure_change_7d", icon="mdi:gauge", device_class=SensorDeviceClass.PRESSURE, native_unit_of_measurement=UnitOfPressure.BAR, suggested_display_precision=2),
     BoilerSensorDescription(key="burn_per_hdd", stat="burn_per_hdd", translation_key="burn_per_hdd", icon="mdi:chart-line", state_class=M, native_unit_of_measurement="h/°C·day", suggested_display_precision=3),
 )
 
@@ -68,6 +77,10 @@ REQUIRES: dict[str, tuple[str, ...]] = {
     "heating_rate": (CONF_INDOOR_TEMPS,),
     "balance_point": (CONF_OUTDOOR_TEMP,),
     "burn_per_hdd": (CONF_OUTDOOR_TEMP,),
+    "regulation_mode": (CONF_THERMOREG,),
+    "flow_deviation": (CONF_FLOW_TEMP, CONF_FLOW_SETPOINT),
+    "curve_slope": (CONF_FLOW_SETPOINT, CONF_OUTDOOR_TEMP),
+    "pressure_change_7d": (CONF_PRESSURE,),
 }
 
 
@@ -105,7 +118,7 @@ class BoilerStatusSensor(BoilerEntity, SensorEntity):
     """Main entity: status + everything the card needs as attributes."""
 
     _unrecorded_attributes = frozenset(
-        {"timeline", "daily", "regression", "entities", "stats", "thresholds"}
+        {"timeline", "daily", "regression", "entities", "stats", "thresholds", "curve_points", "curve_fit"}
     )
 
     @property
@@ -131,18 +144,29 @@ class BoilerStatusSensor(BoilerEntity, SensorEntity):
             "short_cycling": m.short_cycling,
             "condensation_lost": m.condensation_lost,
             "heating_ineffective": m.heating_ineffective,
+            "pressure_problem": m.pressure_problem,
+            "flow_target": m.flow_target(),
+            "pressure": m.pressure(),
+            "regulation_mode": m.regulation_mode,
             "thresholds": {
                 "short_cycle_min": round(m.short_cycle_s / 60, 1),
                 "return": m.return_threshold,
+                "pressure_min": float(m._opt("pressure_min", 1.0)),
+                "pressure_max": float(m._opt("pressure_max", 2.5)),
             },
             "sources": {
                 "burner": cfg.get("burner_entity"),
                 "flow": cfg.get(CONF_FLOW_TEMP),
                 "return": cfg.get(CONF_RETURN_TEMP),
                 "outdoor": cfg.get(CONF_OUTDOOR_TEMP),
+                "setpoint": cfg.get(CONF_FLOW_SETPOINT),
+                "thermoregulation": cfg.get(CONF_THERMOREG),
+                "pressure": cfg.get(CONF_PRESSURE),
             },
             "timeline": m.timeline(24),
             "daily": m.daily(30),
             "regression": m.regression(),
+            "curve_points": m.curve_points() if cfg.get(CONF_FLOW_SETPOINT) else [],
+            "curve_fit": m.curve_fit() if cfg.get(CONF_FLOW_SETPOINT) else None,
             "entities": entities,
         }

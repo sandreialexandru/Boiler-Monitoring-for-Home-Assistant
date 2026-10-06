@@ -17,6 +17,12 @@ It works with any boiler. All it needs is an entity that tells it when the burne
 </p>
 
 <p align="center">
+  <img src="docs/images/card-fixed-flow.png" width="420" alt="Fixed flow temperature chart">
+  &nbsp;
+  <img src="docs/images/card-fixed-flow-dark.png" width="420" alt="Fixed flow temperature chart, dark theme">
+</p>
+
+<p align="center">
   <img src="docs/images/card-compact-light.png" width="420" alt="Compact card, light theme">
   &nbsp;
   <img src="docs/images/card-compact-dark.png" width="420" alt="Compact card, dark theme">
@@ -46,6 +52,8 @@ It works with any boiler. All it needs is an entity that tells it when the burne
 | 🔁 **Short-cycling detection** | flags any restart sooner than *N* minutes after the previous stop. The off-time is measured from the stored stop time, so a Home Assistant restart never produces a false alarm |
 | 💧 **Condensing efficiency** | % of burn time with the return below the condensing threshold, plus an alert when the return stays too hot |
 | 🌡️ **Flow/return ΔT** | live, and as a daily average |
+| 🎯 **Flow target vs actual** | compares the real flow temperature with the boiler's setpoint and knows whether the boiler runs on **weather compensation** (automatic thermoregulation) or a **fixed flow temperature**. The card draws the real heating curve, or the fixed flow line |
+| 🧯 **Pressure** | heating-circuit pressure with low/high alert (all year) and a 7-day trend to spot slow leaks |
 | 🏠 **Heating effect** | measures how much the rooms actually warmed after the burner started (°C/h) and alerts when the boiler burns without effect |
 | 📈 **Outdoor correlation** | daily burn hours vs outdoor temperature, linear regression, **balance point**, **burn hours per degree-day** |
 | ❄️ **Season gating** | optionally pauses all monitoring outside the heating season, so domestic-hot-water starts in summer don't count |
@@ -85,6 +93,9 @@ The card is registered automatically, so you don't need to add a dashboard resou
 | Return temperature sensor | – | Enables condensing ratio and the condensation-lost alert |
 | Outdoor temperature sensor | – | Enables balance point and burn per degree-day |
 | Indoor temperature sensors | – | One or more; their average is used for the heating-effect check |
+| Flow target / setpoint sensor | – | The flow temperature the boiler aims for (e.g. Ariston *CH flow setpoint temp*). Enables flow-vs-target and the heating-curve chart |
+| Automatic thermoregulation entity | – | Switch that turns weather compensation on/off (e.g. Ariston *automatic thermoregulation*). ON = curve, OFF = fixed flow. The card adapts to it |
+| Heating circuit pressure sensor | – | In bar (e.g. Ariston *heating circuit pressure*). Enables the pressure alert and the 7-day trend |
 | Heating-season entity / state | – | e.g. `input_boolean.heating_season` = `on`, `climate.x` = `heat`, or an `input_select` option. Leave it empty to monitor all year |
 
 Entities that need a sensor you didn't configure are simply not created.
@@ -104,6 +115,7 @@ Entities that need a sensor you didn't configure are simply not created.
 | Ignore burns shorter than | 20 s | Relay chatter / ignition glitches are discarded entirely |
 | Notification service | – | `notify.mobile_app_your_phone` **or** a notify entity. Leave empty for no push |
 | Write CSV log | on | `/config/boiler_monitor/<name>.csv` |
+| Minimum / maximum pressure | 1.0 / 2.5 bar | Outside this range *Pressure problem* triggers (clears with 0.05 bar hysteresis) |
 
 ## Entities
 
@@ -127,6 +139,10 @@ All entities belong to one device named after your integration. The examples use
 | `sensor.centrala_heating_rate` | °C/h | Room warming rate from the last effect check *(needs indoor)* |
 | `sensor.centrala_balance_point` | °C | Outdoor temperature at which the house needs no heating *(needs outdoor, ≥ 3 full days)* |
 | `sensor.centrala_burn_hours_per_degree_day_7d` | h/°C·day | Burn hours ÷ heating degree-days over the last 7 full days *(needs outdoor)* |
+| `sensor.centrala_regulation_mode` | – | `weather_compensation` / `fixed` *(needs thermoregulation entity)* |
+| `sensor.centrala_flow_vs_target_24h` | °C | Average of actual flow − target while burning, last 24 h. The first 5 minutes of each burn (warm-up) are ignored *(needs flow + setpoint)* |
+| `sensor.centrala_heating_curve_slope` | °C/°C | How many °C the flow target rises for each °C colder outside, fitted from the last 7 days in weather-compensation mode *(needs setpoint + outdoor)* |
+| `sensor.centrala_pressure_change_7d` | bar | Pressure now vs the oldest day of the last week. A steady negative value means a slow leak *(needs pressure)* |
 
 ### Binary sensors
 
@@ -136,6 +152,7 @@ All entities belong to one device named after your integration. The examples use
 | `binary_sensor.centrala_short_cycling` | problem | A short cycle happened in the last 60 minutes |
 | `binary_sensor.centrala_condensation_lost` | problem | Return above threshold for *N* minutes while burning. Clears when the return drops 1 °C below the threshold or the burner stops |
 | `binary_sensor.centrala_heating_ineffective` | problem | The last effect check measured less than the minimum rise |
+| `binary_sensor.centrala_pressure_problem` | problem | Pressure below the minimum or above the maximum |
 
 ## The card
 
@@ -149,6 +166,7 @@ mode: full                       # full | compact
 show_timeline: true              # 24 h burner timeline (short cycles in red)
 show_daily: true                 # last 14 days: burn hours per day + outdoor avg
 show_correlation: true           # burn vs outdoor scatter + regression + balance point
+show_curve: true                 # heating curve (weather compensation) or fixed-flow chart
 ```
 
 ### Compact card
@@ -169,7 +187,11 @@ The compact card shows the status, active alerts as icons, four key numbers and 
 4. **Statistics tiles**: cycles today (with short cycles), cycles/h, average burn, average off, 24 h duty cycle, burn today, condensing %, heating rate.
 5. **Last 24 hours**: every burn as a bar, short cycles in red, the current burn pulsing.
 6. **Last 14 days**: burn hours per day, with the date and average outdoor temperature underneath. A red cap marks days with short cycles.
-7. **Burn vs outdoor**: one dot per full day (newer days are more opaque), the regression line, the balance point (green line), burn per degree-day and R².
+7. **Heating curve / Fixed flow temperature** (with a setpoint sensor). It adapts to the regulation mode:
+   - *Weather compensation*: one orange dot per hour = the flow target at that outdoor temperature, hollow blue dots = the real flow while burning, plus the fitted curve with its **slope** and the target at 0 °C and −10 °C.
+   - *Fixed flow*: a dashed line at the fixed flow temperature and the real flow while burning.
+   - Both modes show the 24 h average of *real vs target*.
+8. **Burn vs outdoor**: one dot per full day (newer days are more opaque), the regression line, the balance point (green line), burn per degree-day and R².
 
 Durations are shown in hours and minutes (e.g. `2 h 14 min`, `45 min`), never as decimal hours. Tapping any value opens the more-info dialog of the underlying entity. The card follows your theme (light/dark), works in both masonry and sections views, and has a visual editor.
 
@@ -185,6 +207,8 @@ A complete example dashboard view is in [`examples/dashboard.yaml`](examples/das
 | `boiler_monitor_condensation_lost` | `entry_id`, `name`, `return` |
 | `boiler_monitor_heating_ineffective` | `entry_id`, `name`, `rise` |
 | `boiler_monitor_cycle_end` | `entry_id`, `name`, `burn_minutes`, `off_minutes_before`, `short_cycle`, `outdoor` |
+| `boiler_monitor_regulation_changed` | `entry_id`, `name`, `mode`, `target` |
+| `boiler_monitor_pressure_problem` | `entry_id`, `name`, `pressure`, `kind` (`low`/`high`) |
 
 Ready-to-use automations (an actionable alert, a logbook entry per cycle, a daily summary) are in [`examples/automations.yaml`](examples/automations.yaml).
 
@@ -213,6 +237,9 @@ time;event;burn_min;off_min;outdoor;flow;return;indoor_avg;extra
 - **Heating effect.** At burner start it stores the average of the indoor sensors. After the delay it computes rise and rate (°C/h). If the burner cycles faster than the delay, the pending check is **kept**, not restarted, so it measures the whole heating period.
 - **Regression / balance point.** For each *complete* past day (≥ 20 h of samples) it computes `burn_hours = a + b · outdoor_avg` by least squares. Balance point = −a / b, the outdoor temperature at which predicted burn time is zero. It needs at least 3 complete days.
 - **Burn per degree-day** = Σ burn hours ÷ Σ max(0, 18 °C − outdoor_avg) over the last 7 complete days.
+- **Flow vs target.** Every minute while burning, after the first 5 minutes of the burn: actual flow − target. In fixed mode, changes of the fixed setpoint are written to the CSV (`SETPOINT`), and every switch of the regulation mode too (`MODE`).
+- **Heating curve.** The target and outdoor temperature are averaged per hour. Hours in weather-compensation mode are fitted with a straight line. It needs at least 6 hours spanning ≥ 3 °C outdoor. Use the same outdoor sensor the boiler uses (e.g. Ariston *Outside temp*) if you want the chart to match the boiler's own curve exactly.
+- **Pressure** is sampled all year (also outside the heating season). The trend compares hourly averages, so heat-up swings are smoothed out.
 - **Storage.** Cycles are kept for 7 days and hourly aggregates for 60 days, in `.storage/boiler_monitor.<entry_id>`. The large attributes (timeline, daily) are excluded from the recorder, so they don't bloat your database.
 
 ## Using it to tune your heating curve
@@ -225,6 +252,9 @@ time;event;burn_min;off_min;outdoor;flow;return;indoor_avg;extra
 | *Heating ineffective* | Flow too low for the current outdoor temperature, TRVs closed, air in radiators | Raise the slope slightly, check TRVs, bleed radiators |
 | Balance point well above 16 °C | Curve too high overall or high heat loss | Lower the parallel shift. Check the windows (or the boiler's location, e.g. an open balcony) |
 | Burn per degree-day | – | Note it before a change and compare 7 days later at similar outdoor temperatures. Lower is better |
+| Real flow constantly 5 °C+ below target | Boiler can't reach the target (power limited, flow too high) | Check the pump speed and the max heating power setting |
+| Real flow above target, many short cycles | Minimum modulation is higher than the demand | Lower the curve or switch to a fixed lower flow temperature in mild weather |
+| Pressure drops ~0.1 bar or more per week | Slow leak or a failing expansion vessel | Check radiator valves and fittings; have the expansion vessel checked |
 
 Change **one thing at a time** and wait a few days. The 14-day chart and the regression make the effect visible.
 
