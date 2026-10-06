@@ -495,3 +495,22 @@ async def test_pressure_alert_and_trend(hass: HomeAssistant, freezer):
     ariston(hass, pressure=1.4)
     await hass.async_block_till_done()
     assert st(hass, "binary_sensor.centrala_pressure_problem").state == "off"
+
+
+async def test_card_resource_registration(hass: HomeAssistant):
+    """The card is added to (and kept up to date in) the dashboard resources."""
+    from homeassistant.setup import async_setup_component
+    from custom_components.boiler_monitor import _ensure_lovelace_resource, _lovelace_resources
+    from custom_components.boiler_monitor.const import CARD_URL
+
+    assert await async_setup_component(hass, "lovelace", {})
+    res = _lovelace_resources(hass)
+    assert res is not None
+    await _ensure_lovelace_resource(hass, f"{CARD_URL}?v=1.0.0")
+    await _ensure_lovelace_resource(hass, f"{CARD_URL}?v=1.0.0")
+    items = [i for i in res.async_items() if i["url"].startswith(CARD_URL)]
+    assert len(items) == 1 and items[0]["type"] == "module"
+    # New version -> same resource updated, not duplicated
+    await _ensure_lovelace_resource(hass, f"{CARD_URL}?v=9.9.9")
+    items = [i for i in res.async_items() if i["url"].startswith(CARD_URL)]
+    assert len(items) == 1 and items[0]["url"].endswith("v=9.9.9")

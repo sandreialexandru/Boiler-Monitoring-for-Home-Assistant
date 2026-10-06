@@ -11,7 +11,7 @@
  *   show_correlation: true
  *   show_curve: true      # heating curve / fixed flow chart (needs a flow setpoint sensor)
  */
-const CARD_VERSION = "1.1.2";
+const CARD_VERSION = "1.1.3";
 
 const I18N = {
   en: {
