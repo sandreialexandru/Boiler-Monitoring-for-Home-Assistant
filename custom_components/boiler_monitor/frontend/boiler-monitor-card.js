@@ -11,7 +11,7 @@
  *   show_correlation: true
  *   show_curve: true      # heating curve / fixed flow chart (needs a flow setpoint sensor)
  */
-const CARD_VERSION = "1.1.1";
+const CARD_VERSION = "1.1.2";
 
 const I18N = {
   en: {
@@ -33,6 +33,8 @@ const I18N = {
     no_points: "No data yet",
     tt_burn: "Burn time", tt_cycles: "Cycles", tt_outdoor: "Outdoor", tt_cond: "Condensing", tt_dt: "Avg ΔT",
     tt_target: "Target", tt_actual: "Actual flow", tt_diff: "Actual − target", tt_mode: "Mode",
+    z_in: "Zoom in", z_out: "Zoom out", z_reset: "Reset zoom", more: "more",
+    z_hint: "Drag to zoom · double-click to zoom in · pinch on touch",
     tt_running: "running", tt_short: "short cycle", tt_from: "Off before", tt_noburn: "not burning this hour",
   },
   ro: {
@@ -54,6 +56,8 @@ const I18N = {
     no_points: "Încă nu sunt date",
     tt_burn: "Timp de ardere", tt_cycles: "Cicluri", tt_outdoor: "Exterior", tt_cond: "Condensare", tt_dt: "ΔT mediu",
     tt_target: "Tur cerut", tt_actual: "Tur real", tt_diff: "Real − cerut", tt_mode: "Mod",
+    z_in: "Mărește", z_out: "Micșorează", z_reset: "Resetează zoom-ul", more: "încă",
+    z_hint: "Trage pentru zoom · dublu-clic pentru mărire · ciupire pe ecran tactil",
     tt_running: "în curs", tt_short: "ciclu scurt", tt_from: "Pauză înainte", tt_noburn: "nu a ars în ora asta",
   },
 };
@@ -79,6 +83,19 @@ const durShort = (min) => {
   const m = Math.round(Number(min));
   return m < 60 ? `${m}m` : `${Math.floor(m / 60)}h${String(m % 60).padStart(2, "0")}`;
 };
+// "Nice" axis ticks for a range.
+const niceTicks = (a, b, target = 5) => {
+  const span = Math.max(b - a, 1e-6);
+  const raw = span / target;
+  const mag = 10 ** Math.floor(Math.log10(raw));
+  const n = raw / mag;
+  const step = (n < 1.5 ? 1 : n < 3 ? 2 : n < 7 ? 5 : 10) * mag;
+  const out = [];
+  for (let v = Math.ceil(a / step - 1e-9) * step; v <= b + 1e-9; v += step) out.push(Math.round(v * 1e6) / 1e6);
+  return { ticks: out, step };
+};
+const tickFmt = (v, step) => (step < 1 ? v.toFixed(1) : String(Math.round(v)));
+
 // Tooltip content: title + rows of [label, value]; stored escaped in data-tip.
 const tipHtml = (title, rows) =>
   `<b>${title}</b>` + rows.filter((r) => r && r[1] != null && r[1] !== "").map(([l, v]) => `<div><span>${l}</span><span>${v}</span></div>`).join("");
@@ -172,39 +189,275 @@ class BoilerMonitorCard extends HTMLElement {
     ]);
   }
 
-  // Floating tooltip: hover (mouse) or tap (touch). One element, re-used.
+  // ---------------------------------------------------------------- tooltip
+  _showTip(html, clientX, anchor) {
+    const card = this.shadowRoot.querySelector("ha-card");
+    const tip = this.shadowRoot.querySelector(".tip");
+    if (!card || !tip) return;
+    tip.innerHTML = html;
+    tip.style.display = "block";
+    const cr = card.getBoundingClientRect();
+    const x = (clientX != null ? clientX : anchor.left + anchor.width / 2) - cr.left;
+    const tw = tip.offsetWidth, th = tip.offsetHeight;
+    const left = Math.min(Math.max(8, x - tw / 2), cr.width - tw - 8);
+    let top = anchor.top - cr.top - th - 8;
+    if (top < 4) top = anchor.bottom - cr.top + 8;
+    tip.style.left = `${left}px`;
+    tip.style.top = `${top}px`;
+  }
+
+  _hideTip() {
+    const tip = this.shadowRoot?.querySelector(".tip");
+    if (tip) tip.style.display = "none";
+    this._pinned = null;
+    this.shadowRoot?.querySelectorAll(".hl").forEach((h) => h.setAttribute("visibility", "hidden"));
+  }
+
+  // Hover (mouse) or tap (touch) on elements with data-tip (bars, timeline).
   _wireTips() {
     const root = this.shadowRoot;
     const card = root.querySelector("ha-card");
-    const tip = root.querySelector(".tip");
-    if (!card || !tip) return;
-    let pinned = null;
-    const show = (el, ev) => {
-      tip.innerHTML = el.getAttribute("data-tip");
-      tip.style.display = "block";
-      const cr = card.getBoundingClientRect();
-      const er = el.getBoundingClientRect();
-      const x = (ev && ev.clientX != null ? ev.clientX : er.left + er.width / 2) - cr.left;
-      const y = er.top - cr.top;
-      const tw = tip.offsetWidth, th = tip.offsetHeight;
-      let left = Math.min(Math.max(8, x - tw / 2), cr.width - tw - 8);
-      let top = y - th - 8;
-      if (top < 4) top = er.bottom - cr.top + 8;
-      tip.style.left = `${left}px`;
-      tip.style.top = `${top}px`;
-    };
-    const hide = () => { tip.style.display = "none"; pinned = null; };
+    if (!card) return;
+    this._pinned = null;
     root.querySelectorAll("[data-tip]").forEach((el) => {
-      el.addEventListener("pointerenter", (ev) => { if (ev.pointerType === "mouse") show(el, ev); });
-      el.addEventListener("pointermove", (ev) => { if (ev.pointerType === "mouse" && !pinned) show(el, ev); });
-      el.addEventListener("pointerleave", (ev) => { if (ev.pointerType === "mouse" && !pinned) hide(); });
+      const show = (ev) => this._showTip(el.getAttribute("data-tip"), ev?.clientX, el.getBoundingClientRect());
+      el.addEventListener("pointerenter", (ev) => { if (ev.pointerType === "mouse" && !this._pinned) show(ev); });
+      el.addEventListener("pointermove", (ev) => { if (ev.pointerType === "mouse" && !this._pinned) show(ev); });
+      el.addEventListener("pointerleave", (ev) => { if (ev.pointerType === "mouse" && !this._pinned) this._hideTip(); });
       el.addEventListener("click", (ev) => {
         ev.stopPropagation();
-        if (pinned === el) { hide(); return; }
-        show(el, ev); pinned = el;
+        if (this._pinned === el) { this._hideTip(); return; }
+        show(ev); this._pinned = el;
       });
     });
-    card.addEventListener("click", () => { if (pinned) hide(); });
+    card.addEventListener("click", () => { if (this._pinned) this._hideTip(); });
+    root.querySelectorAll(".plot").forEach((el) => this._wirePlot(el));
+  }
+
+  // ------------------------------------------------------- zoomable scatter
+  // cfg: { full:{x0,x1,y0,y1}, H, xFmt, yFmt, layers(X,Y,dom)->svg, points:[{x,y,cls,op,tip}] }
+  _plot(id, cfg) {
+    this._plots = this._plots || {};
+    this._zoom = this._zoom || {};
+    this._plots[id] = cfg;
+    return `<div class="plot ${this._zoom[id] ? "zoomed" : ""}" data-plot="${id}">${this._plotInner(id)}</div>`;
+  }
+
+  _plotDomain(id) {
+    const { full } = this._plots[id];
+    const z = this._zoom[id];
+    if (!z) return { ...full };
+    // keep inside the full range
+    const clamp = (lo, hi, a, b) => {
+      const w = Math.min(b - a, hi - lo);
+      let s0 = Math.max(lo, Math.min(a, hi - w));
+      return [s0, s0 + w];
+    };
+    const [x0, x1] = clamp(full.x0, full.x1, z.x0, z.x1);
+    const [y0, y1] = clamp(full.y0, full.y1, z.y0, z.y1);
+    return { x0, x1, y0, y1 };
+  }
+
+  _plotInner(id) {
+    const t = this._t;
+    const cfg = this._plots[id];
+    const W = 320, H = cfg.H || 160, P = { l: 32, r: 10, t: 10, b: 22 };
+    const d = this._plotDomain(id);
+    const X = (v) => P.l + ((v - d.x0) / (d.x1 - d.x0)) * (W - P.l - P.r);
+    const Y = (v) => H - P.b - ((v - d.y0) / (d.y1 - d.y0)) * (H - P.t - P.b);
+    const xt = niceTicks(d.x0, d.x1, 6), yt = niceTicks(d.y0, d.y1, 4);
+    let axes = `<line x1="${P.l}" x2="${W - P.r}" y1="${H - P.b}" y2="${H - P.b}" class="ax"/>`;
+    xt.ticks.forEach((x) => { axes += `<text x="${X(x)}" y="${H - 6}" class="axl" text-anchor="middle">${cfg.xFmt(tickFmt(x, xt.step))}</text>`; });
+    yt.ticks.forEach((y) => { axes += `<text x="${P.l - 5}" y="${Y(y) + 3}" class="axl" text-anchor="end">${cfg.yFmt(tickFmt(y, yt.step))}</text><line x1="${P.l}" x2="${W - P.r}" y1="${Y(y)}" y2="${Y(y)}" class="grd"/>`; });
+    const r = this._zoom[id] ? 3.6 : 3; // a bit larger when zoomed in
+    const dots = cfg.points.map((p) => p.y == null ? "" :
+      `<circle cx="${X(p.x).toFixed(1)}" cy="${Y(p.y).toFixed(1)}" r="${p.cls === "hdot" ? r - 0.4 : r}" class="${p.cls}" style="opacity:${p.op ?? 1}"/>`).join("");
+    cfg._geo = { W, H, P, d };
+    const zoomed = !!this._zoom[id];
+    return `<svg class="corr ${zoomed ? "zoomed" : ""}" viewBox="0 0 ${W} ${H}">
+        <defs><clipPath id="clip-${id}"><rect x="${P.l}" y="${P.t - 4}" width="${W - P.l - P.r}" height="${H - P.t - P.b + 4}"/></clipPath></defs>
+        ${axes}
+        <g clip-path="url(#clip-${id})">${cfg.layers ? cfg.layers(X, Y, d) : ""}${dots}
+          <circle class="hl" r="7" visibility="hidden"/></g>
+        <rect class="sel" visibility="hidden"/>
+      </svg>
+      <div class="zbtns">
+        <button data-z="in" title="${esc(t.z_in)}" aria-label="${esc(t.z_in)}">+</button>
+        <button data-z="out" title="${esc(t.z_out)}" aria-label="${esc(t.z_out)}" ${zoomed ? "" : "disabled"}>−</button>
+        ${zoomed ? `<button data-z="reset" title="${esc(t.z_reset)}" aria-label="${esc(t.z_reset)}">⟲</button>` : ""}
+      </div>`;
+  }
+
+  _redrawPlot(id) {
+    const el = this.shadowRoot.querySelector(`.plot[data-plot="${id}"]`);
+    if (!el) return;
+    el.innerHTML = this._plotInner(id);
+    el.classList.toggle("zoomed", !!this._zoom[id]);
+    this._wirePlot(el);
+  }
+
+  _setZoom(id, dom) {
+    const { full } = this._plots[id];
+    const minW = (full.x1 - full.x0) / 25, minH = (full.y1 - full.y0) / 25;
+    const cx = (dom.x0 + dom.x1) / 2, cy = (dom.y0 + dom.y1) / 2;
+    const w = Math.max(dom.x1 - dom.x0, minW), h = Math.max(dom.y1 - dom.y0, minH);
+    const nd = { x0: cx - w / 2, x1: cx + w / 2, y0: cy - h / 2, y1: cy + h / 2 };
+    const isFull = w >= full.x1 - full.x0 - 1e-6 && h >= full.y1 - full.y0 - 1e-6;
+    if (isFull) delete this._zoom[id]; else this._zoom[id] = nd;
+    this._hideTip();
+    this._redrawPlot(id);
+  }
+
+  _zoomBy(id, factor, cx, cy) {
+    const d = this._plotDomain(id);
+    const px = cx ?? (d.x0 + d.x1) / 2, py = cy ?? (d.y0 + d.y1) / 2;
+    this._setZoom(id, {
+      x0: px - (px - d.x0) / factor, x1: px + (d.x1 - px) / factor,
+      y0: py - (py - d.y0) / factor, y1: py + (d.y1 - py) / factor,
+    });
+  }
+
+  _wirePlot(el) {
+    const id = el.getAttribute("data-plot");
+    if (!this._plots?.[id]) return;
+    // Zoom buttons are re-created on every redraw
+    el.querySelectorAll("button[data-z]").forEach((b) => b.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      const z = b.getAttribute("data-z");
+      if (z === "in") this._zoomBy(id, 2);
+      else if (z === "out") this._zoomBy(id, 0.5);
+      else this._setZoom(id, this._plots[id].full);
+    }));
+    // Gesture listeners live on the container, which survives redraws of the
+    // SVG inside it, so pinch/pan keep working while the chart re-renders.
+    if (el._wired) return;
+    el._wired = true;
+
+    const cfg = () => this._plots[id];
+    const svg = () => el.querySelector("svg");
+    const geo = () => cfg()._geo;
+    const toSvg = (ev) => {
+      const r = svg().getBoundingClientRect(), { W, H } = geo();
+      return { sx: ((ev.clientX - r.left) / r.width) * W, sy: ((ev.clientY - r.top) / r.height) * H, k: W / r.width };
+    };
+    const toData = (sx, sy) => {
+      const { W, H, P, d } = geo();
+      return {
+        x: d.x0 + ((sx - P.l) / (W - P.l - P.r)) * (d.x1 - d.x0),
+        y: d.y0 + ((H - P.b - sy) / (H - P.t - P.b)) * (d.y1 - d.y0),
+      };
+    };
+    const sX = (x) => { const { W, P, d } = geo(); return P.l + ((x - d.x0) / (d.x1 - d.x0)) * (W - P.l - P.r); };
+    const sY = (y) => { const { H, P, d } = geo(); return H - P.b - ((y - d.y0) / (d.y1 - d.y0)) * (H - P.t - P.b); };
+
+    // All points near the pointer, so overlapping points are listed together
+    const showNear = (ev, pin) => {
+      const { sx, sy, k } = toSvg(ev);
+      const R = 9 * k;
+      const hits = cfg().points
+        .filter((p) => p.y != null && p.tip)
+        .map((p) => ({ p, dist: Math.hypot(sX(p.x) - sx, sY(p.y) - sy) }))
+        .filter((o) => o.dist <= R)
+        .sort((a, b) => a.dist - b.dist);
+      if (!hits.length) { if (pin || !this._pinned) this._hideTip(); return; }
+      const tips = [...new Set(hits.map((h) => h.p.tip))];
+      const max = 3;
+      let html = tips.slice(0, max).join("<hr>");
+      if (tips.length > max) html += `<div class="more">+${tips.length - max} ${esc(this._t.more)}</div>`;
+      const hl = svg().querySelector(".hl");
+      hl.setAttribute("cx", sX(hits[0].p.x)); hl.setAttribute("cy", sY(hits[0].p.y));
+      hl.setAttribute("visibility", "visible");
+      const r = svg().getBoundingClientRect(), { W, H } = geo();
+      const ax = r.left + (sX(hits[0].p.x) / W) * r.width, ay = r.top + (sY(hits[0].p.y) / H) * r.height;
+      this._showTip(html, ax, { left: ax, width: 0, top: ay - 6, bottom: ay + 6 });
+      if (pin) this._pinned = el;
+    };
+
+    const ptrs = new Map();
+    let start = null, moved = false, pinch0 = null, lastTap = 0, raf = 0;
+    const later = (fn) => { cancelAnimationFrame(raf); raf = requestAnimationFrame(fn); };
+    const midData = () => {
+      const [a, b] = [...ptrs.values()];
+      const p = toSvg({ clientX: (a.clientX + b.clientX) / 2, clientY: (a.clientY + b.clientY) / 2 });
+      return toData(p.sx, p.sy);
+    };
+    el.addEventListener("pointerdown", (ev) => {
+      if (ev.target.closest?.("button")) return;
+      try { el.setPointerCapture(ev.pointerId); } catch (e) { /* synthetic events */ }
+      ptrs.set(ev.pointerId, { clientX: ev.clientX, clientY: ev.clientY });
+      moved = false;
+      start = { ...toSvg(ev), dom: this._plotDomain(id), type: ev.pointerType };
+      if (ptrs.size === 2) {
+        const [a, b] = [...ptrs.values()];
+        pinch0 = { dist: Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY), dom: this._plotDomain(id), mid: midData() };
+      }
+    });
+    el.addEventListener("pointermove", (ev) => {
+      if (!ptrs.has(ev.pointerId)) {
+        if (ev.pointerType === "mouse" && !this._pinned && !ev.target.closest?.("button")) showNear(ev, false);
+        return;
+      }
+      ptrs.set(ev.pointerId, { clientX: ev.clientX, clientY: ev.clientY });
+      const p = toSvg(ev);
+      if (start && Math.hypot(p.sx - start.sx, p.sy - start.sy) > 6 * p.k) moved = true;
+      if (!moved || !start) return;
+      if (ptrs.size === 2 && pinch0) {
+        const [a, b] = [...ptrs.values()];
+        const f = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY) / Math.max(pinch0.dist, 1);
+        const d0 = pinch0.dom, m = pinch0.mid;
+        later(() => this._setZoom(id, {
+          x0: m.x - (m.x - d0.x0) / f, x1: m.x + (d0.x1 - m.x) / f,
+          y0: m.y - (m.y - d0.y0) / f, y1: m.y + (d0.y1 - m.y) / f }));
+      } else if (start.type === "mouse") {
+        const sel = svg().querySelector(".sel");
+        sel.setAttribute("x", Math.min(start.sx, p.sx)); sel.setAttribute("y", Math.min(start.sy, p.sy));
+        sel.setAttribute("width", Math.abs(p.sx - start.sx)); sel.setAttribute("height", Math.abs(p.sy - start.sy));
+        sel.setAttribute("visibility", "visible");
+        this._hideTip();
+      } else if (this._zoom[id] && ptrs.size === 1) {
+        const { W, H, P } = geo(), d0 = start.dom;
+        const dx = ((p.sx - start.sx) / (W - P.l - P.r)) * (d0.x1 - d0.x0);
+        const dy = ((p.sy - start.sy) / (H - P.t - P.b)) * (d0.y1 - d0.y0);
+        later(() => this._setZoom(id, { x0: d0.x0 - dx, x1: d0.x1 - dx, y0: d0.y0 + dy, y1: d0.y1 + dy }));
+      }
+    });
+    const end = (ev) => {
+      if (!ptrs.has(ev.pointerId)) return;
+      ptrs.delete(ev.pointerId);
+      if (ptrs.size < 2) pinch0 = null;
+      if (ptrs.size) { start = null; return; } // lifting one finger of a pinch: don't treat as pan/tap
+      if (!start) return;
+      const p = toSvg(ev);
+      if (moved && start.type === "mouse") {
+        svg().querySelector(".sel").setAttribute("visibility", "hidden");
+        if (Math.abs(p.sx - start.sx) > 8 * p.k && Math.abs(p.sy - start.sy) > 8 * p.k) {
+          const a = toData(start.sx, start.sy), b = toData(p.sx, p.sy);
+          this._setZoom(id, { x0: Math.min(a.x, b.x), x1: Math.max(a.x, b.x), y0: Math.min(a.y, b.y), y1: Math.max(a.y, b.y) });
+        }
+      } else if (!moved) {
+        const now = Date.now();
+        if (now - lastTap < 300) {            // double tap / double click: zoom in here
+          lastTap = 0;
+          const c = toData(p.sx, p.sy);
+          this._zoomBy(id, 2, c.x, c.y);
+        } else {
+          lastTap = now;
+          showNear(ev, true);
+        }
+      }
+      start = null; moved = false;
+    };
+    el.addEventListener("pointerup", end);
+    el.addEventListener("pointercancel", end);
+    el.addEventListener("pointerleave", (ev) => { if (ev.pointerType === "mouse" && !ptrs.size && !this._pinned) this._hideTip(); });
+    el.addEventListener("click", (ev) => ev.stopPropagation());
+    // Ctrl/⌘ + wheel zooms; the plain wheel keeps scrolling the dashboard
+    el.addEventListener("wheel", (ev) => {
+      if (!ev.ctrlKey && !ev.metaKey) return;
+      ev.preventDefault();
+      const p = toSvg(ev), c = toData(p.sx, p.sy);
+      this._zoomBy(id, ev.deltaY < 0 ? 1.4 : 1 / 1.4, c.x, c.y);
+    }, { passive: false });
   }
 
   _moreInfo(entityId) {
@@ -389,7 +642,6 @@ class BoilerMonitorCard extends HTMLElement {
       mode ? ` <span class="mchip ${fixed ? "fixed" : "curve"}">${esc(fixed ? t.mode_fixed : t.mode_curve)}</span>` : ""}</div>`;
     if (!pts.length) return `${title}<div class="muted small">${esc(t.no_points)}</div>`;
 
-    const W = 320, H = 160, P = { l: 30, r: 10, t: 10, b: 22 };
     const xs = pts.map((p) => p[0]);
     let xmin = Math.floor(Math.min(...xs) - 1), xmax = Math.ceil(Math.max(...xs) + 1);
     if (!fixed) { xmin = Math.min(xmin, -10); xmax = Math.max(xmax, 15); }
@@ -399,29 +651,10 @@ class BoilerMonitorCard extends HTMLElement {
     if (!fixed && fit) ys.push(fit.intercept + fit.raw_slope * xmin, fit.intercept + fit.raw_slope * xmax);
     let ymin = Math.floor((Math.min(...ys) - 3) / 5) * 5, ymax = Math.ceil((Math.max(...ys) + 3) / 5) * 5;
     if (ymax - ymin < 15) ymax = ymin + 15;
-    const X = (v) => P.l + ((v - xmin) / (xmax - xmin)) * (W - P.l - P.r);
-    const Y = (v) => H - P.b - ((v - ymin) / (ymax - ymin)) * (H - P.t - P.b);
 
-    let axes = `<line x1="${P.l}" x2="${W - P.r}" y1="${H - P.b}" y2="${H - P.b}" class="ax"/>`;
-    const xstep = (xmax - xmin) > 16 ? 5 : 2;
-    for (let x = Math.ceil(xmin / xstep) * xstep; x <= xmax; x += xstep) {
-      axes += `<text x="${X(x)}" y="${H - 6}" class="axl" text-anchor="middle">${x}°</text>`;
-    }
-    const ystep = (ymax - ymin) > 30 ? 10 : 5;
-    for (let y = ymin; y <= ymax; y += ystep) {
-      axes += `<text x="${P.l - 5}" y="${Y(y) + 3}" class="axl" text-anchor="end">${y}°</text><line x1="${P.l}" x2="${W - P.r}" y1="${Y(y)}" y2="${Y(y)}" class="grd"/>`;
-    }
-
-    let line = "";
-    if (fixed && a.flow_target != null) {
-      line = `<line x1="${P.l}" x2="${W - P.r}" y1="${Y(a.flow_target)}" y2="${Y(a.flow_target)}" class="reg"/>`;
-    } else if (!fixed && fit) {
-      const f = (x) => fit.intercept + fit.raw_slope * x;
-      line = `<line x1="${X(xmin)}" y1="${Y(f(xmin))}" x2="${X(xmax)}" y2="${Y(f(xmax))}" class="reg"/>`;
-    }
     const n = pts.length;
     const op = (i) => (0.3 + 0.7 * (i + 1) / n).toFixed(2);
-    const hourTip = (p) => esc(tipHtml(
+    const hourTip = (p) => tipHtml(
       p[4] != null ? esc(`${this._fmtTs(p[4])} – ${this._fmtTs(p[4] + 3600, false)}`) : "",
       [
         [t.tt_outdoor, `${fmt(p[0], 1)} °C`],
@@ -429,9 +662,23 @@ class BoilerMonitorCard extends HTMLElement {
         [t.tt_actual, p[2] != null ? `${fmt(p[2], 1)} °C` : t.tt_noburn],
         p[2] != null ? [t.tt_diff, `${p[2] - p[1] > 0 ? "+" : ""}${fmt(p[2] - p[1], 1)} °C`] : null,
         [t.tt_mode, p[3] === 1 ? t.mode_curve : t.mode_fixed],
-      ]));
-    const tgt = fixed ? "" : pts.map((p, i) => `<g class="hit" data-tip="${hourTip(p)}"><circle cx="${X(p[0]).toFixed(1)}" cy="${Y(p[1]).toFixed(1)}" r="7" class="hitc"/><circle cx="${X(p[0]).toFixed(1)}" cy="${Y(p[1]).toFixed(1)}" r="2.6" class="dot" style="opacity:${op(i)}"/></g>`).join("");
-    const act = pts.filter((p) => p[2] != null).map((p) => `<g class="hit" data-tip="${hourTip(p)}"><circle cx="${X(p[0]).toFixed(1)}" cy="${Y(p[2]).toFixed(1)}" r="7" class="hitc"/><circle cx="${X(p[0]).toFixed(1)}" cy="${Y(p[2]).toFixed(1)}" r="2.6" class="hdot" style="opacity:.75"/></g>`).join("");
+      ]);
+    const points = [
+      ...(fixed ? [] : pts.map((p, i) => ({ x: p[0], y: p[1], cls: "dot", op: op(i), tip: hourTip(p) }))),
+      ...pts.filter((p) => p[2] != null).map((p) => ({ x: p[0], y: p[2], cls: "hdot", op: 0.75, tip: hourTip(p) })),
+    ];
+    const layers = (X, Y, d) => {
+      if (fixed && a.flow_target != null) return `<line x1="${X(d.x0)}" x2="${X(d.x1)}" y1="${Y(a.flow_target)}" y2="${Y(a.flow_target)}" class="reg"/>`;
+      if (!fixed && fit) {
+        const f = (x) => fit.intercept + fit.raw_slope * x;
+        return `<line x1="${X(d.x0)}" y1="${Y(f(d.x0))}" x2="${X(d.x1)}" y2="${Y(f(d.x1))}" class="reg"/>`;
+      }
+      return "";
+    };
+    const plot = this._plot("curve", {
+      full: { x0: xmin, x1: xmax, y0: ymin, y1: ymax }, H: 160,
+      xFmt: (v) => `${v}°`, yFmt: (v) => `${v}°`, layers, points,
+    });
 
     const parts = [];
     if (fixed && a.flow_target != null) parts.push(`<span data-ent="${esc(a.sources?.setpoint || "")}"><b>${fmt(a.flow_target, 0)} °C</b> ${esc(t.fixed_at)}</span>`);
@@ -446,7 +693,7 @@ class BoilerMonitorCard extends HTMLElement {
     }
     const legend = `<div class="legend">${fixed ? `<span><i class="lline"></i>${esc(t.fixed_at)}</span>` : `<span><i class="ldot"></i>${esc(t.leg_target)}</span>`}<span><i class="lhdot"></i>${esc(t.leg_actual)}</span></div>`;
     const note = !fixed && !fit ? `<div class="muted small">${esc(t.need_curve)}</div>` : "";
-    return `${title}<svg class="corr" viewBox="0 0 ${W} ${H}">${axes}${line}${tgt}${act}</svg>${legend}${note}<div class="cfoot">${parts.join("")}</div>`;
+    return `${title}${plot}${legend}${note}<div class="cfoot">${parts.join("")}</div>`;
   }
 
   _corr(a) {
@@ -456,44 +703,29 @@ class BoilerMonitorCard extends HTMLElement {
     const reg = a.regression;
     const head = `<div class="sec">${esc(t.corr)}</div>`;
     if (pts.length < 3) return `${head}<div class="muted small">${esc(t.not_enough)}</div>`;
-    const W = 320, H = 150, P = { l: 30, r: 10, t: 10, b: 22 };
     const xs = pts.map((p) => p.outdoor);
     let xmin = Math.min(...xs), xmax = Math.max(...xs);
     if (reg?.balance_point != null && reg.balance_point < 30) xmax = Math.max(xmax, reg.balance_point);
     xmin = Math.floor(xmin - 1); xmax = Math.ceil(xmax + 1);
     const ymax = Math.ceil(Math.max(1, ...pts.map((p) => p.burn_h)) * 1.1);
-    const X = (v) => P.l + ((v - xmin) / (xmax - xmin)) * (W - P.l - P.r);
-    const Y = (v) => H - P.b - (v / ymax) * (H - P.t - P.b);
-    const dots = pts.map((p, i) => `<g class="hit" data-tip="${esc(this._dayTip(p))}"><circle cx="${X(p.outdoor).toFixed(1)}" cy="${Y(p.burn_h).toFixed(1)}" r="9" class="hitc"/><circle cx="${X(p.outdoor).toFixed(1)}" cy="${Y(p.burn_h).toFixed(1)}" r="3.5"
-      class="dot" style="opacity:${(0.35 + 0.65 * (i + 1) / pts.length).toFixed(2)}"/></g>`).join("");
-    let line = "", bp = "";
-    if (reg) {
+    const points = pts.map((p, i) => ({ x: p.outdoor, y: p.burn_h, cls: "dot", op: (0.35 + 0.65 * (i + 1) / pts.length).toFixed(2), tip: this._dayTip(p) }));
+    const layers = (X, Y, d) => {
+      if (!reg) return "";
       const f = (x) => reg.intercept + reg.slope * x;
-      let x1 = xmin, x2 = xmax;
-      if (reg.slope !== 0) {
-        const xa = (0 - reg.intercept) / reg.slope, xb = (ymax - reg.intercept) / reg.slope;
-        x1 = Math.max(xmin, Math.min(xa, xb));
-        x2 = Math.min(xmax, Math.max(xa, xb));
-      }
-      if (x2 > x1) line = `<line x1="${X(x1)}" y1="${Y(f(x1))}" x2="${X(x2)}" y2="${Y(f(x2))}" class="reg"/>`;
-      if (reg.balance_point != null && reg.balance_point >= xmin && reg.balance_point <= xmax) {
-        bp = `<line x1="${X(reg.balance_point)}" x2="${X(reg.balance_point)}" y1="${P.t}" y2="${H - P.b}" class="bpl"/>`;
-      }
-    }
-    let axes = `<line x1="${P.l}" x2="${W - P.r}" y1="${H - P.b}" y2="${H - P.b}" class="ax"/>`;
-    const step = (xmax - xmin) > 16 ? 5 : 2;
-    for (let x = Math.ceil(xmin / step) * step; x <= xmax; x += step) {
-      axes += `<text x="${X(x)}" y="${H - 6}" class="axl" text-anchor="middle">${x}°</text>`;
-    }
-    for (let y = 0; y <= ymax; y += Math.max(1, Math.round(ymax / 4))) {
-      axes += `<text x="${P.l - 5}" y="${Y(y) + 3}" class="axl" text-anchor="end">${y}h</text><line x1="${P.l}" x2="${W - P.r}" y1="${Y(y)}" y2="${Y(y)}" class="grd"/>`;
-    }
+      let out = `<line x1="${X(d.x0)}" y1="${Y(f(d.x0))}" x2="${X(d.x1)}" y2="${Y(f(d.x1))}" class="reg"/>`;
+      if (reg.balance_point != null) out = `<line x1="${X(reg.balance_point)}" x2="${X(reg.balance_point)}" y1="${Y(d.y1) - 4}" y2="${Y(d.y0)}" class="bpl"/>` + out;
+      return out;
+    };
+    const plot = this._plot("corr", {
+      full: { x0: xmin, x1: xmax, y0: 0, y1: ymax }, H: 150,
+      xFmt: (v) => `${v}°`, yFmt: (v) => `${v}h`, layers, points,
+    });
     const perHdd = a.stats?.burn_per_hdd;
     const foot = `<div class="cfoot">
       ${reg?.balance_point != null ? `<span data-ent="${esc(a.entities?.balance_point || "")}"><b>${fmt(reg.balance_point, 1)}°C</b> ${esc(t.balance)}</span>` : ""}
       ${perHdd != null ? `<span data-ent="${esc(a.entities?.burn_per_hdd || "")}"><b>${fmt(perHdd * 60, 0)}</b> ${esc(t.per_hdd)}</span>` : ""}
       ${reg ? `<span class="muted">R² ${fmt(reg.r2, 2)} · n=${reg.n}</span>` : ""}</div>`;
-    return `${head}<svg class="corr" viewBox="0 0 ${W} ${H}">${axes}${bp}${line}${dots}</svg>${foot}`;
+    return `${head}${plot}${foot}`;
   }
 }
 
@@ -508,9 +740,21 @@ const STYLE = `
   .tip b { display: block; font-weight: 600; margin-bottom: 2px; }
   .tip div { display: flex; justify-content: space-between; gap: 12px; }
   .tip div span:first-child { opacity: .75; }
-  .hit { cursor: pointer; }
-  .hitc { fill: transparent; }
-  .hit:hover .dot, .hit:hover .hdot { stroke: var(--primary-text-color); stroke-width: 1.5; }
+  .tip hr { border: 0; border-top: 1px solid currentColor; opacity: .25; margin: 6px 0; }
+  .tip .more { opacity: .75; font-style: italic; justify-content: flex-start; }
+  .plot { position: relative; }
+  .plot { touch-action: pan-y; }
+  .plot.zoomed { touch-action: none; }
+  .plot svg { cursor: crosshair; user-select: none; -webkit-user-select: none; }
+  .plot svg.zoomed { cursor: grab; }
+  .hl { fill: none; stroke: var(--primary-text-color); stroke-width: 1.6; pointer-events: none; }
+  .sel { fill: color-mix(in srgb, var(--primary-color) 15%, transparent); stroke: var(--primary-color); stroke-width: 1; stroke-dasharray: 3 2; pointer-events: none; }
+  .zbtns { position: absolute; top: 2px; right: 2px; display: flex; gap: 4px; }
+  .zbtns button { width: 26px; height: 26px; border-radius: 6px; border: 1px solid var(--divider-color);
+                  background: var(--card-background-color); color: var(--primary-text-color); font: 15px/1 inherit;
+                  cursor: pointer; padding: 0; opacity: .85; }
+  .zbtns button:hover { opacity: 1; border-color: var(--primary-color); }
+  .zbtns button:disabled { opacity: .35; cursor: default; }
   [data-tip] { cursor: pointer; }
   .bar:hover .bf { opacity: 1; filter: brightness(1.08); }
   .wrap { padding: 16px; display: flex; flex-direction: column; gap: 12px; }
