@@ -9,8 +9,9 @@
  *   show_timeline: true   # full mode only
  *   show_daily: true
  *   show_correlation: true
+ *   show_curve: true      # heating curve / fixed flow chart (needs a flow setpoint sensor)
  */
-const CARD_VERSION = "1.0.4";
+const CARD_VERSION = "1.1.0";
 
 const I18N = {
   en: {
@@ -23,6 +24,13 @@ const I18N = {
     balance: "Balance point", per_hdd: "min per degree-day", not_enough: "Needs ≥ 3 full days of data",
     a_short: "Short-cycling", a_cond: "Condensation lost", a_ineff: "Heating ineffective",
     no_entity: "Pick the Boiler Monitor status sensor", burn_h: "burn time",
+    target: "Target", m_curve: "curve", m_fixed: "fixed", pressure: "Pressure", a_press: "Pressure problem",
+    curve_title: "Heating curve", fixed_title: "Fixed flow temperature",
+    mode_curve: "Weather compensation", mode_fixed: "Fixed flow",
+    slope: "Slope", at0: "at 0 °C", atm10: "at −10 °C", fixed_at: "Fixed flow",
+    dev24: "actual vs target (24h)", leg_target: "target", leg_actual: "actual (burning)",
+    need_curve: "Needs ≥ 6 hours with outdoor temperatures at least 3 °C apart",
+    no_points: "No data yet",
   },
   ro: {
     heating: "Încălzește", idle: "În așteptare", off_season: "În afara sezonului", unavailable: "Indisponibil",
@@ -34,6 +42,13 @@ const I18N = {
     balance: "Punct de echilibru", per_hdd: "min pe grad-zi", not_enough: "Necesită ≥ 3 zile complete de date",
     a_short: "Short-cycling", a_cond: "Condensare pierdută", a_ineff: "Încălzire ineficientă",
     no_entity: "Alege senzorul de stare Boiler Monitor", burn_h: "timp de ardere",
+    target: "Cerut", m_curve: "curbă", m_fixed: "fix", pressure: "Presiune", a_press: "Problemă presiune",
+    curve_title: "Curba de încălzire", fixed_title: "Temperatură de tur fixă",
+    mode_curve: "Compensare climatică", mode_fixed: "Tur fix",
+    slope: "Panta", at0: "la 0 °C", atm10: "la −10 °C", fixed_at: "Tur fix",
+    dev24: "real vs cerut (24h)", leg_target: "cerut", leg_actual: "real (în ardere)",
+    need_curve: "Necesită ≥ 6 ore cu temperaturi exterioare diferite cu cel puțin 3 °C",
+    no_points: "Încă nu sunt date",
   },
 };
 
@@ -78,6 +93,7 @@ class BoilerMonitorCard extends HTMLElement {
             { name: "show_timeline", selector: { boolean: {} } },
             { name: "show_daily", selector: { boolean: {} } },
             { name: "show_correlation", selector: { boolean: {} } },
+            { name: "show_curve", selector: { boolean: {} } },
           ],
         },
       ],
@@ -91,7 +107,7 @@ class BoilerMonitorCard extends HTMLElement {
 
   setConfig(config) {
     if (!config) throw new Error("Invalid configuration");
-    this._config = { mode: "full", show_timeline: true, show_daily: true, show_correlation: true, ...config };
+    this._config = { mode: "full", show_timeline: true, show_daily: true, show_correlation: true, show_curve: true, ...config };
     if (!this.shadowRoot) this.attachShadow({ mode: "open" });
     this._lastState = undefined;
     if (this._hass) this._render();
@@ -145,6 +161,7 @@ class BoilerMonitorCard extends HTMLElement {
       a.short_cycling && { k: "short_cycling", txt: t.a_short, icon: "mdi:sync-alert" },
       a.condensation_lost && { k: "condensation_lost", txt: t.a_cond, icon: "mdi:water-off" },
       a.heating_ineffective && { k: "heating_ineffective", txt: t.a_ineff, icon: "mdi:home-alert" },
+      a.pressure_problem && { k: "pressure_problem", txt: `${t.a_press} · ${fmt(a.pressure, 2)} bar`, icon: "mdi:gauge-low" },
     ].filter(Boolean);
 
     const sub = status === "heating" && s.current_burn_min != null
@@ -179,11 +196,17 @@ class BoilerMonitorCard extends HTMLElement {
     } else {
       const temps = [
         a.sources?.flow && { k: a.sources.flow, l: t.flow, v: a.flow, u: "°C" },
+        a.sources?.setpoint && { k: a.sources.setpoint, v: a.flow_target, u: "°C",
+          l: t.target, sub: a.regulation_mode ? (a.regulation_mode === "fixed" ? t.m_fixed : t.m_curve) : "" },
         a.sources?.return && { k: a.sources.return, l: t.ret, v: a.return, u: "°C",
           cls: a.return != null && a.return > a.thresholds?.return ? "bad" : "good" },
         a.sources?.flow && a.sources?.return && { k: a.entities?.delta_t, l: t.dt, v: s.delta_t, u: "°C" },
         a.sources?.outdoor && { k: a.sources.outdoor, l: t.outdoor, v: a.outdoor, u: "°C" },
         a.indoor != null && { k: "", l: t.indoor, v: a.indoor, u: "°C" },
+        a.sources?.pressure && { k: a.sources.pressure, v: a.pressure, u: "bar", d: 2,
+          l: s.pressure_change_7d != null && Math.abs(s.pressure_change_7d) >= 0.1
+            ? `${t.pressure} ${s.pressure_change_7d < 0 ? "↓" : "↑"}${fmt(Math.abs(s.pressure_change_7d), 1)}` : t.pressure,
+          cls: a.pressure != null && (a.pressure < a.thresholds?.pressure_min || a.pressure > a.thresholds?.pressure_max) ? "bad" : "" },
       ].filter(Boolean);
 
       const tiles = [
@@ -198,14 +221,15 @@ class BoilerMonitorCard extends HTMLElement {
       ].filter(Boolean);
 
       body = `
-        ${temps.length ? `<div class="temps">${temps.map((x) => `
-          <div class="temp ${x.cls || ""}" data-ent="${esc(x.k || "")}"><span>${esc(x.l)}</span><b>${fmt(x.v, 1)}<small>${x.u}</small></b></div>`).join("")}</div>` : ""}
+        ${temps.length ? `<div class="temps ${temps.length > 5 ? "many" : ""}">${temps.map((x) => `
+          <div class="temp ${x.cls || ""}" data-ent="${esc(x.k || "")}"><span>${esc(x.l)}</span><b>${fmt(x.v, x.d ?? 1)}<small>${x.u}</small></b>${x.sub ? `<em>${esc(x.sub)}</em>` : ""}</div>`).join("")}</div>` : ""}
         <div class="grid">${tiles.map(([k, l, v, u, cls]) => `
           <div class="tile ${cls}" data-ent="${esc(a.entities?.[k] || "")}">
             <div class="tv">${v}<small>${esc(u)}</small></div><div class="tl">${esc(l)}</div>
           </div>`).join("")}</div>
         ${this._config.show_timeline ? `<div class="sec">${esc(t.last24)}</div>${this._timeline(a, false)}` : ""}
         ${this._config.show_daily ? this._daily(a) : ""}
+        ${this._config.show_curve && a.sources?.setpoint && a.sources?.outdoor ? this._curve(a) : ""}
         ${this._config.show_correlation && a.sources?.outdoor ? this._corr(a) : ""}`;
     }
 
@@ -274,6 +298,69 @@ class BoilerMonitorCard extends HTMLElement {
         <div class="bd">${dd}</div>${d.outdoor != null ? `<div class="bo">${fmt(d.outdoor, 0)}°</div>` : ""}</div>`;
     }).join("");
     return `<div class="sec">${esc(t.days)} <span class="muted">· ${esc(t.burn_h)}</span></div><div class="bars">${bars}</div>`;
+  }
+
+  // Heating curve (weather compensation) or fixed flow chart: flow °C vs outdoor °C.
+  _curve(a) {
+    const t = this._t;
+    const s = a.stats || {};
+    const mode = a.regulation_mode; // "weather_compensation" | "fixed" | null
+    const fixed = mode === "fixed";
+    const all = a.curve_points || [];
+    const pts = mode ? all.filter((p) => p[3] === (fixed ? 0 : 1)) : all;
+    const title = `<div class="sec">${esc(fixed ? t.fixed_title : t.curve_title)}${
+      mode ? ` <span class="mchip ${fixed ? "fixed" : "curve"}">${esc(fixed ? t.mode_fixed : t.mode_curve)}</span>` : ""}</div>`;
+    if (!pts.length) return `${title}<div class="muted small">${esc(t.no_points)}</div>`;
+
+    const W = 320, H = 160, P = { l: 30, r: 10, t: 10, b: 22 };
+    const xs = pts.map((p) => p[0]);
+    let xmin = Math.floor(Math.min(...xs) - 1), xmax = Math.ceil(Math.max(...xs) + 1);
+    if (!fixed) { xmin = Math.min(xmin, -10); xmax = Math.max(xmax, 15); }
+    const ys = pts.flatMap((p) => [p[1], p[2]]).filter((v) => v != null);
+    if (a.flow_target != null) ys.push(a.flow_target);
+    const fit = a.curve_fit;
+    if (!fixed && fit) ys.push(fit.intercept + fit.raw_slope * xmin, fit.intercept + fit.raw_slope * xmax);
+    let ymin = Math.floor((Math.min(...ys) - 3) / 5) * 5, ymax = Math.ceil((Math.max(...ys) + 3) / 5) * 5;
+    if (ymax - ymin < 15) ymax = ymin + 15;
+    const X = (v) => P.l + ((v - xmin) / (xmax - xmin)) * (W - P.l - P.r);
+    const Y = (v) => H - P.b - ((v - ymin) / (ymax - ymin)) * (H - P.t - P.b);
+
+    let axes = `<line x1="${P.l}" x2="${W - P.r}" y1="${H - P.b}" y2="${H - P.b}" class="ax"/>`;
+    const xstep = (xmax - xmin) > 16 ? 5 : 2;
+    for (let x = Math.ceil(xmin / xstep) * xstep; x <= xmax; x += xstep) {
+      axes += `<text x="${X(x)}" y="${H - 6}" class="axl" text-anchor="middle">${x}°</text>`;
+    }
+    const ystep = (ymax - ymin) > 30 ? 10 : 5;
+    for (let y = ymin; y <= ymax; y += ystep) {
+      axes += `<text x="${P.l - 5}" y="${Y(y) + 3}" class="axl" text-anchor="end">${y}°</text><line x1="${P.l}" x2="${W - P.r}" y1="${Y(y)}" y2="${Y(y)}" class="grd"/>`;
+    }
+
+    let line = "";
+    if (fixed && a.flow_target != null) {
+      line = `<line x1="${P.l}" x2="${W - P.r}" y1="${Y(a.flow_target)}" y2="${Y(a.flow_target)}" class="reg"/>`;
+    } else if (!fixed && fit) {
+      const f = (x) => fit.intercept + fit.raw_slope * x;
+      line = `<line x1="${X(xmin)}" y1="${Y(f(xmin))}" x2="${X(xmax)}" y2="${Y(f(xmax))}" class="reg"/>`;
+    }
+    const n = pts.length;
+    const op = (i) => (0.3 + 0.7 * (i + 1) / n).toFixed(2);
+    const tgt = fixed ? "" : pts.map((p, i) => `<circle cx="${X(p[0]).toFixed(1)}" cy="${Y(p[1]).toFixed(1)}" r="2.6" class="dot" style="opacity:${op(i)}"><title>${fmt(p[0])}°C → ${t.leg_target} ${fmt(p[1])}°C</title></circle>`).join("");
+    const act = pts.filter((p) => p[2] != null).map((p, i) => `<circle cx="${X(p[0]).toFixed(1)}" cy="${Y(p[2]).toFixed(1)}" r="2.6" class="hdot" style="opacity:.75"><title>${fmt(p[0])}°C → ${t.leg_actual} ${fmt(p[2])}°C</title></circle>`).join("");
+
+    const parts = [];
+    if (fixed && a.flow_target != null) parts.push(`<span data-ent="${esc(a.sources?.setpoint || "")}"><b>${fmt(a.flow_target, 0)} °C</b> ${esc(t.fixed_at)}</span>`);
+    if (!fixed && fit) {
+      parts.push(`<span data-ent="${esc(a.entities?.curve_slope || "")}"><b>${fmt(fit.slope, 2)}</b> ${esc(t.slope)}</span>`);
+      parts.push(`<span><b>${fmt(fit.at_0, 0)} °C</b> ${esc(t.at0)}</span>`);
+      parts.push(`<span><b>${fmt(fit.at_minus_10, 0)} °C</b> ${esc(t.atm10)}</span>`);
+    }
+    if (s.flow_deviation != null) {
+      const d = s.flow_deviation;
+      parts.push(`<span data-ent="${esc(a.entities?.flow_deviation || "")}" class="${Math.abs(d) > 5 ? "warnt" : ""}"><b>${d > 0 ? "+" : ""}${fmt(d, 1)} °C</b> ${esc(t.dev24)}</span>`);
+    }
+    const legend = `<div class="legend">${fixed ? `<span><i class="lline"></i>${esc(t.fixed_at)}</span>` : `<span><i class="ldot"></i>${esc(t.leg_target)}</span>`}<span><i class="lhdot"></i>${esc(t.leg_actual)}</span></div>`;
+    const note = !fixed && !fit ? `<div class="muted small">${esc(t.need_curve)}</div>` : "";
+    return `${title}<svg class="corr" viewBox="0 0 ${W} ${H}">${axes}${line}${tgt}${act}</svg>${legend}${note}<div class="cfoot">${parts.join("")}</div>`;
   }
 
   _corr(a) {
@@ -353,6 +440,9 @@ const STYLE = `
            background: color-mix(in srgb, var(--bm-short) 14%, transparent); color: var(--bm-short); }
   .alert ha-icon { --mdc-icon-size: 18px; }
   .temps { display: grid; gap: 6px; grid-template-columns: repeat(auto-fit, minmax(62px, 1fr)); }
+  .temps.many { grid-template-columns: repeat(4, 1fr); }
+  @container (max-width: 340px) { .temps.many { grid-template-columns: repeat(3, 1fr); } }
+  .temp em { font-style: normal; font-size: 10px; color: var(--secondary-text-color); margin-top: -2px; }
   .temp { padding: 6px 8px; border-radius: 10px; background: var(--secondary-background-color);
           display: flex; flex-direction: column; }
   .temp span { font-size: 11px; color: var(--secondary-text-color); text-transform: uppercase; letter-spacing: .04em; }
@@ -401,6 +491,17 @@ const STYLE = `
   .bpl { stroke: var(--bm-good); stroke-width: 1.5; }
   .ax { stroke: var(--divider-color); } .grd { stroke: var(--divider-color); opacity: .5; }
   .axl { font-size: 10px; fill: var(--secondary-text-color); }
+  .hdot { fill: none; stroke: var(--primary-color); stroke-width: 1.6; }
+  .legend { display: flex; gap: 14px; font-size: 11px; color: var(--secondary-text-color); margin-top: -4px; }
+  .legend span { display: inline-flex; align-items: center; gap: 5px; }
+  .ldot { width: 8px; height: 8px; border-radius: 50%; background: var(--bm-burn); display: inline-block; }
+  .lhdot { width: 7px; height: 7px; border-radius: 50%; border: 1.6px solid var(--primary-color); display: inline-block; }
+  .lline { width: 14px; border-top: 2px dashed var(--primary-color); display: inline-block; }
+  .mchip { font-size: 11px; font-weight: 400; padding: 1px 8px; border-radius: 10px; margin-left: 6px;
+           background: var(--secondary-background-color); color: var(--secondary-text-color); }
+  .mchip.curve { background: color-mix(in srgb, var(--bm-good) 16%, transparent); color: var(--bm-good); }
+  .mchip.fixed { background: color-mix(in srgb, var(--primary-color) 14%, transparent); color: var(--primary-color); }
+  .warnt b { color: var(--bm-warn); }
   .cfoot { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 13px; }
 `;
 

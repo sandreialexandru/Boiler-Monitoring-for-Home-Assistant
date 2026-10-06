@@ -10,8 +10,11 @@
           "burner_on_state": "State meaning \"burner on\" (text)",
           "flow_temp_entity": "Flow temperature sensor (°C) – optional",
           "return_temp_entity": "Return temperature sensor (°C) – optional",
+          "flow_setpoint_entity": "Flow target / setpoint sensor (°C) – optional",
+          "thermoregulation_entity": "Automatic thermoregulation entity – optional",
           "outdoor_temp_entity": "Outdoor temperature sensor (°C) – optional",
           "indoor_temp_entities": "Indoor temperature sensors (°C) – optional",
+          "pressure_entity": "Heating circuit pressure sensor (bar) – optional",
           "season_entity": "Heating-season entity – optional",
           "season_state": "State meaning \"heating season active\" (text)"
         },
@@ -21,8 +24,11 @@
           "burner_on_state": "The exact state that means \"burner on\". Use \"on\" for switch / binary_sensor / input_boolean, \"heating\" for a climate entity, or the exact text of a sensor's state.",
           "flow_temp_entity": "Temperature of the hot water leaving the boiler towards the radiators, in °C. Needed for the flow-return ΔT.",
           "return_temp_entity": "Temperature of the water coming back from the radiators into the boiler, in °C. Needed for the condensing ratio and the \"Condensation lost\" alert.",
+          "flow_setpoint_entity": "The flow temperature the boiler is aiming for, in °C – e.g. \"Ariston CH flow setpoint temp\". With automatic thermoregulation ON it follows the weather-compensation curve; with it OFF it is the fixed flow temperature you set. Enables flow-vs-target and the heating-curve chart.",
+          "thermoregulation_entity": "The switch that turns the boiler's weather compensation on/off – e.g. \"Ariston automatic thermoregulation\". ON = the flow target follows the outdoor temperature (curve); OFF = fixed flow temperature. The card and charts adapt to the mode.",
           "outdoor_temp_entity": "Outside air temperature, in °C. Needed for the outdoor correlation, balance point and burn hours per degree-day.",
           "indoor_temp_entities": "One or more room temperature sensors, in °C. Their average (unavailable sensors are skipped) is used to check whether heating actually warms the house.",
+          "pressure_entity": "Water pressure of the heating circuit, in bar – e.g. \"Ariston heating circuit pressure\". Enables the low/high pressure alert and the 7-day pressure trend (slow leak detection). Monitored all year.",
           "season_entity": "Optional. While this entity is NOT in the state below, monitoring is paused (no cycles counted, no alerts) – useful in summer when the boiler only makes hot water. Leave empty to monitor all year.",
           "season_state": "The state of the heating-season entity that means \"heating season active\", e.g. \"on\" (input_boolean / switch), \"heat\" (climate) or the exact option text of an input_select. Ignored if no heating-season entity is selected."
         }
@@ -34,8 +40,11 @@
           "burner_on_state": "State meaning \"burner on\" (text)",
           "flow_temp_entity": "Flow temperature sensor (°C) – optional",
           "return_temp_entity": "Return temperature sensor (°C) – optional",
+          "flow_setpoint_entity": "Flow target / setpoint sensor (°C) – optional",
+          "thermoregulation_entity": "Automatic thermoregulation entity – optional",
           "outdoor_temp_entity": "Outdoor temperature sensor (°C) – optional",
           "indoor_temp_entities": "Indoor temperature sensors (°C) – optional",
+          "pressure_entity": "Heating circuit pressure sensor (bar) – optional",
           "season_entity": "Heating-season entity – optional",
           "season_state": "State meaning \"heating season active\" (text)"
         },
@@ -44,8 +53,11 @@
           "burner_on_state": "The exact state that means \"burner on\". Use \"on\" for switch / binary_sensor / input_boolean, \"heating\" for a climate entity, or the exact text of a sensor's state.",
           "flow_temp_entity": "Temperature of the hot water leaving the boiler towards the radiators, in °C. Needed for the flow-return ΔT.",
           "return_temp_entity": "Temperature of the water coming back from the radiators into the boiler, in °C. Needed for the condensing ratio and the \"Condensation lost\" alert.",
+          "flow_setpoint_entity": "The flow temperature the boiler is aiming for, in °C – e.g. \"Ariston CH flow setpoint temp\". With automatic thermoregulation ON it follows the weather-compensation curve; with it OFF it is the fixed flow temperature you set. Enables flow-vs-target and the heating-curve chart.",
+          "thermoregulation_entity": "The switch that turns the boiler's weather compensation on/off – e.g. \"Ariston automatic thermoregulation\". ON = the flow target follows the outdoor temperature (curve); OFF = fixed flow temperature. The card and charts adapt to the mode.",
           "outdoor_temp_entity": "Outside air temperature, in °C. Needed for the outdoor correlation, balance point and burn hours per degree-day.",
           "indoor_temp_entities": "One or more room temperature sensors, in °C. Their average (unavailable sensors are skipped) is used to check whether heating actually warms the house.",
+          "pressure_entity": "Water pressure of the heating circuit, in bar – e.g. \"Ariston heating circuit pressure\". Enables the low/high pressure alert and the 7-day pressure trend (slow leak detection). Monitored all year.",
           "season_entity": "Optional. While this entity is NOT in the state below, monitoring is paused (no cycles counted, no alerts) – useful in summer when the boiler only makes hot water. Leave empty to monitor all year.",
           "season_state": "The state of the heating-season entity that means \"heating season active\", e.g. \"on\" (input_boolean / switch), \"heat\" (climate) or the exact option text of an input_select. Ignored if no heating-season entity is selected."
         }
@@ -67,6 +79,8 @@
           "effect_check_minutes": "Heating-effect check delay (minutes)",
           "min_temp_rise": "Minimum expected room rise (°C)",
           "min_burn_seconds": "Ignore burns shorter than (seconds)",
+          "pressure_min": "Minimum pressure (bar)",
+          "pressure_max": "Maximum pressure (bar)",
           "notify_service": "Notification service (text) – optional",
           "csv_log": "Write CSV log (on/off)"
         },
@@ -77,6 +91,8 @@
           "effect_check_minutes": "In minutes. How long after the burner starts the room temperatures are checked again to see if they rose. Use 30–45 for radiators, 90–120 for underfloor heating. Default 45 min.",
           "min_temp_rise": "In °C. If the average room temperature rose less than this after the check delay, \"Heating ineffective\" is raised (e.g. air in radiators, closed valves, flow too cold). Default 0.2 °C.",
           "min_burn_seconds": "In seconds. Burns shorter than this are treated as relay glitches or failed ignitions and are removed completely from the statistics. Default 20 s.",
+          "pressure_min": "In bar. Below this the \"Pressure problem\" alert is raised (refill the system). Typical cold pressure is 1.0–1.5 bar. Default 1.0 bar.",
+          "pressure_max": "In bar. Above this the \"Pressure problem\" alert is raised (expansion vessel / over-filling). The safety valve opens around 3 bar. Default 2.5 bar.",
           "notify_service": "Where to send push alerts, e.g. notify.mobile_app_my_phone (or a notify entity). Leave empty for no push notifications – events and binary sensors work either way. Max one alert per hour per type.",
           "csv_log": "When on, every START / STOP / SHORT_CYCLE / RETURN_HOT / INEFFECTIVE event is appended to a CSV file in /config/boiler_monitor/ (one file per boiler)."
         }
@@ -132,6 +148,22 @@
       },
       "burn_per_hdd": {
         "name": "Burn hours per degree-day (7d)"
+      },
+      "regulation_mode": {
+        "name": "Regulation mode",
+        "state": {
+          "weather_compensation": "Weather compensation",
+          "fixed": "Fixed flow temperature"
+        }
+      },
+      "flow_deviation": {
+        "name": "Flow vs target (24h)"
+      },
+      "curve_slope": {
+        "name": "Heating curve slope"
+      },
+      "pressure_change_7d": {
+        "name": "Pressure change (7d)"
       }
     },
     "binary_sensor": {
@@ -146,6 +178,9 @@
       },
       "heating_ineffective": {
         "name": "Heating ineffective"
+      },
+      "pressure_problem": {
+        "name": "Pressure problem"
       }
     }
   },

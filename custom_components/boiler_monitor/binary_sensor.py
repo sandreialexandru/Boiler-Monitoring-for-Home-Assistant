@@ -12,7 +12,7 @@ from homeassistant.components.binary_sensor import (
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .const import CONF_INDOOR_TEMPS, CONF_RETURN_TEMP
+from .const import CONF_INDOOR_TEMPS, CONF_PRESSURE, CONF_RETURN_TEMP
 from .entity import BoilerEntity
 from .monitor import BoilerMonitor
 
@@ -43,6 +43,11 @@ BINARY: tuple[BoilerBinaryDescription, ...] = (
         key="heating_ineffective", translation_key="heating_ineffective", icon="mdi:home-alert",
         device_class=BinarySensorDeviceClass.PROBLEM,
         value_fn=lambda m: m.heating_ineffective, requires=CONF_INDOOR_TEMPS,
+    ),
+    BoilerBinaryDescription(
+        key="pressure_problem", translation_key="pressure_problem", icon="mdi:gauge-low",
+        device_class=BinarySensorDeviceClass.PROBLEM,
+        value_fn=lambda m: m.pressure_problem, requires=CONF_PRESSURE,
     ),
 )
 

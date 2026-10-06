@@ -342,12 +342,15 @@ async def test_dump_card_fixture(hass: HomeAssistant, freezer):
     freezer.move_to("2026-10-22 00:00:30+03:00")
     temps(hass)
     await burner(hass, False)
-    await setup(hass, options={**OPTIONS, "notify_service": ""})
+    ariston(hass, thermo="on")
+    await setup(hass, ARISTON, {**OPTIONS, "notify_service": ""})
     outs = [9, 7, 6, 8, 4, 3, 5, 2, 1, 3, 6, 4, 2, 0]
     for day, o in enumerate(outs):
         for h in range(24):
             hour_out = o + (3 if 11 <= h <= 17 else -1)
-            temps(hass, out=hour_out, flow=58, ret=44 + (h % 5), liv=20.8, dor=20.4)
+            tgt = round(38 + 1.4 * (12 - hour_out) + random.uniform(-0.5, 0.5), 1)
+            ariston(hass, setpoint=tgt, thermo="on", pressure=round(1.62 - 0.004 * day, 2))
+            temps(hass, out=hour_out, flow=round(tgt - 1.5 + random.uniform(-2, 1), 1), ret=44 + (h % 5), liv=20.8, dor=20.4)
             burn = max(2, int(36 - 2.6 * hour_out + random.randint(-4, 4)))
             if day == len(outs) - 1 and h == 15:
                 break
@@ -393,3 +396,102 @@ async def test_condensing_at_threshold(hass: HomeAssistant, freezer):
     s = st(hass, "sensor.centrala_condensing_ratio_24h")
     assert float(s.state) == 80
     assert s.attributes["condensing_minutes_24h"] == 20
+
+
+ARISTON = {
+    **DATA,
+    "flow_setpoint_entity": "sensor.ariston_ch_flow_setpoint_temp",
+    "thermoregulation_entity": "switch.ariston_automatic_thermoregulation",
+    "pressure_entity": "sensor.ariston_heating_circuit_pressure",
+}
+
+
+def ariston(hass, setpoint=55.0, thermo="off", pressure=1.7):
+    hass.states.async_set("sensor.ariston_ch_flow_setpoint_temp", setpoint, {"device_class": "temperature"})
+    hass.states.async_set("switch.ariston_automatic_thermoregulation", thermo)
+    hass.states.async_set("sensor.ariston_heating_circuit_pressure", pressure, {"device_class": "pressure", "unit_of_measurement": "bar"})
+
+
+async def test_fixed_flow_deviation_and_logging(hass: HomeAssistant, freezer):
+    import os
+    freezer.move_to("2026-11-10 08:00:00+02:00")
+    path = hass.config.path("boiler_monitor", "centrala.csv")
+    if os.path.exists(path):
+        os.remove(path)
+    temps(hass, flow=50)
+    ariston(hass, setpoint=55, thermo="off")
+    await burner(hass, False)
+    await setup(hass, ARISTON, {**OPTIONS, "notify_service": ""})
+    assert st(hass, "sensor.centrala_regulation_mode").state == "fixed"
+    await burner(hass, True)
+    # First 5 minutes (warm-up) are ignored for flow-vs-target
+    temps(hass, flow=30)
+    await advance(hass, freezer, 4)
+    temps(hass, flow=52)
+    await advance(hass, freezer, 20)
+    dev = float(st(hass, "sensor.centrala_flow_vs_target_24h").state)
+    assert dev == pytest.approx(-3.0, abs=0.2)
+    attrs = st(hass, "sensor.centrala_status").attributes
+    assert attrs["flow_target"] == 55 and attrs["regulation_mode"] == "fixed"
+    # Fixed setpoint changed by the user -> logged
+    ariston(hass, setpoint=50, thermo="off")
+    await hass.async_block_till_done()
+    # Thermoregulation switched on -> mode change logged + event
+    events = []
+    hass.bus.async_listen("boiler_monitor_regulation_changed", lambda e: events.append(e))
+    ariston(hass, setpoint=48, thermo="on")
+    await hass.async_block_till_done()
+    assert st(hass, "sensor.centrala_regulation_mode").state == "weather_compensation"
+    assert events and events[0].data["mode"] == "weather_compensation"
+    await hass.async_block_till_done()
+    lines = await hass.async_add_executor_job(lambda: open(path).read())
+    assert "SETPOINT;" in lines and "from=55.0;to=50.0" in lines
+    assert "MODE;" in lines and "mode=weather_compensation" in lines
+
+
+async def test_weather_compensation_curve(hass: HomeAssistant, freezer):
+    """Target follows outdoor -> curve points + slope."""
+    freezer.move_to("2026-11-10 00:00:30+02:00")
+    temps(hass)
+    ariston(hass, thermo="on")
+    await burner(hass, False)
+    await setup(hass, ARISTON, {**OPTIONS, "notify_service": ""})
+    # 12 hours, outdoor from 10 to -1, curve: target = 40 + 1.5 * (10 - out)
+    for h in range(12):
+        out = 10 - h
+        temps(hass, out=out)
+        ariston(hass, setpoint=40 + 1.5 * (10 - out), thermo="on")
+        await hass.async_block_till_done()
+        await advance(hass, freezer, 60)
+    attrs = st(hass, "sensor.centrala_status").attributes
+    pts = attrs["curve_points"]
+    assert len(pts) >= 10 and all(p[3] == 1 for p in pts)
+    fit = attrs["curve_fit"]
+    assert fit["slope"] == pytest.approx(1.5, abs=0.05)
+    assert fit["at_0"] == pytest.approx(55, abs=0.5)
+    assert float(st(hass, "sensor.centrala_heating_curve_slope").state) == pytest.approx(1.5, abs=0.05)
+
+
+async def test_pressure_alert_and_trend(hass: HomeAssistant, freezer):
+    freezer.move_to("2026-11-01 00:00:30+02:00")
+    notify = async_mock_service(hass, "notify", "mobile_app_telefon")
+    temps(hass)
+    ariston(hass, pressure=1.6)
+    await burner(hass, False)
+    await setup(hass, ARISTON, OPTIONS)
+    assert st(hass, "binary_sensor.centrala_pressure_problem").state == "off"
+    # Slow leak: 1.6 -> ~1.3 over 4 days
+    for day in range(4):
+        ariston(hass, pressure=round(1.6 - 0.1 * day, 2))
+        await hass.async_block_till_done()
+        await advance(hass, freezer, 24 * 60)
+    change = float(st(hass, "sensor.centrala_pressure_change_7d").state)
+    assert change == pytest.approx(-0.3, abs=0.05)
+    # Drop below minimum -> alert, works even out of season logic
+    ariston(hass, pressure=0.8)
+    await hass.async_block_till_done()
+    assert st(hass, "binary_sensor.centrala_pressure_problem").state == "on"
+    assert any("pressure" in c.data["title"] for c in notify)
+    ariston(hass, pressure=1.4)
+    await hass.async_block_till_done()
+    assert st(hass, "binary_sensor.centrala_pressure_problem").state == "off"
