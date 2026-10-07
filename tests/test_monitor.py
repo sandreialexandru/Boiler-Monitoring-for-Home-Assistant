@@ -506,8 +506,8 @@ async def test_card_resource_registration(hass: HomeAssistant):
     assert await async_setup_component(hass, "lovelace", {})
     res = _lovelace_resources(hass)
     assert res is not None
-    await _ensure_lovelace_resource(hass, f"{CARD_URL}?v=1.0.0")
-    await _ensure_lovelace_resource(hass, f"{CARD_URL}?v=1.0.0")
+    assert await _ensure_lovelace_resource(hass, f"{CARD_URL}?v=1.0.0")
+    assert await _ensure_lovelace_resource(hass, f"{CARD_URL}?v=1.0.0")
     items = [i for i in res.async_items() if i["url"].startswith(CARD_URL)]
     assert len(items) == 1 and items[0]["type"] == "module"
     # New version -> same resource updated, not duplicated

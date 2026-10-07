@@ -48,8 +48,11 @@ async def _register_card(hass: HomeAssistant) -> None:
     2. It is added as a Lovelace **resource** (storage mode). Resources are
        fetched every time a dashboard loads, so the card is found even after
        the browser / companion app cache expires.
-    3. It is also registered as an extra frontend module, as a fallback for
-       YAML-mode dashboards (resources are read-only there).
+    3. Only when that is impossible (YAML-mode dashboards, where resources
+       are read-only) it is registered as an extra frontend module instead.
+       Extra modules run very early, before Home Assistant may swap in the
+       scoped custom-element registry, which made the card intermittently
+       "not exist" - so they are a fallback, not the default.
     The ?v=<version> query string busts caches on every update.
     """
     path = Path(__file__).parent / "frontend" / "boiler-monitor-card.js"
@@ -66,18 +69,22 @@ async def _register_card(hass: HomeAssistant) -> None:
         return
 
     url = f"{CARD_URL}?v={VERSION}"
-    try:
-        from homeassistant.components.frontend import add_extra_js_url
 
-        add_extra_js_url(hass, url)
-    except ImportError:  # pragma: no cover
-        pass
+    def _extra_module() -> None:
+        try:
+            from homeassistant.components.frontend import add_extra_js_url
+
+            add_extra_js_url(hass, url)
+        except ImportError:  # pragma: no cover
+            pass
 
     async def _add_resource(_event: Event | None = None) -> None:
         try:
-            await _ensure_lovelace_resource(hass, url)
+            if not await _ensure_lovelace_resource(hass, url):
+                _extra_module()
         except Exception as err:  # noqa: BLE001 - never block setup
             _LOGGER.warning("Could not add the Boiler Monitor card as a dashboard resource: %s", err)
+            _extra_module()
 
     if hass.state is CoreState.running:
         await _add_resource()
@@ -96,15 +103,18 @@ def _lovelace_resources(hass: HomeAssistant):
     return res if res is not None and hasattr(res, "async_create_item") else None
 
 
-async def _ensure_lovelace_resource(hass: HomeAssistant, url: str) -> None:
-    """Create or update the card resource (storage-mode dashboards)."""
+async def _ensure_lovelace_resource(hass: HomeAssistant, url: str) -> bool:
+    """Create or update the card resource (storage-mode dashboards).
+
+    Returns False when resources can't be managed (YAML mode).
+    """
     resources = _lovelace_resources(hass)
     if resources is None:
         _LOGGER.info(
             "Lovelace is in YAML mode: add %s (type: module) to your resources "
             "if the Boiler Monitor card does not show up", url
         )
-        return
+        return False
     if not getattr(resources, "loaded", True):
         await resources.async_load()
         resources.loaded = True
@@ -115,9 +125,10 @@ async def _ensure_lovelace_resource(hass: HomeAssistant, url: str) -> None:
             await resources.async_update_item(first["id"], {"res_type": "module", "url": url})
         for d in dupes:
             await resources.async_delete_item(d["id"])
-        return
+        return True
     await resources.async_create_item({"res_type": "module", "url": url})
     _LOGGER.info("Added the Boiler Monitor card to the dashboard resources (%s)", url)
+    return True
 
 
 async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
