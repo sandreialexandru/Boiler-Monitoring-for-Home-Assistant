@@ -11,7 +11,7 @@
  *   show_correlation: true
  *   show_curve: true      # heating curve / fixed flow chart (needs a flow setpoint sensor)
  */
-const CARD_VERSION = "1.1.3";
+const CARD_VERSION = "1.1.4";
 
 const I18N = {
   en: {
@@ -847,14 +847,52 @@ const STYLE = `
   .cfoot { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 13px; }
 `;
 
-if (!customElements.get("boiler-monitor-card")) {
-  customElements.define("boiler-monitor-card", BoilerMonitorCard);
+// ---------------------------------------------------------------- register
+// Some Home Assistant setups replace window.customElements after page load
+// (the scoped-custom-element-registry polyfill). Anything defined before the
+// swap is invisible to the new registry, and Lovelace then reports
+// "Custom element doesn't exist". So: define now, and keep checking for a few
+// seconds and define again on the new registry if it was replaced.
+const CARD_TAG = "boiler-monitor-card";
+const registerCard = () => {
+  try {
+    if (!window.customElements.get(CARD_TAG)) {
+      window.customElements.define(CARD_TAG, BoilerMonitorCard);
+      return true;
+    }
+  } catch (err) {
+    // The native registry may already hold this exact class; that's fine.
+    if (!window.customElements.get(CARD_TAG)) {
+      try {
+        window.customElements.define(CARD_TAG, class extends BoilerMonitorCard {});
+        return true;
+      } catch (err2) {
+        console.warn("boiler-monitor-card: could not register on the current registry", err2);
+      }
+    }
+  }
+  return false;
+};
+
+if (!window.__boilerMonitorCardLoaded) {
+  window.__boilerMonitorCardLoaded = CARD_VERSION;
+  registerCard();
   window.customCards = window.customCards || [];
-  window.customCards.push({
-    type: "boiler-monitor-card",
-    name: "Boiler Monitor",
-    description: "Burner cycles, condensation and heating-curve insights (boiler_monitor integration).",
-    preview: true,
-  });
+  if (!window.customCards.some((c) => c.type === CARD_TAG)) {
+    window.customCards.push({
+      type: CARD_TAG,
+      name: "Boiler Monitor",
+      description: "Burner cycles, condensation and heating-curve insights (boiler_monitor integration).",
+      preview: true,
+    });
+  }
   console.info(`%c BOILER-MONITOR-CARD %c ${CARD_VERSION} `, "background:#ff8100;color:#fff", "");
+  let checks = 0;
+  const watch = setInterval(() => {
+    registerCard();
+    if (++checks >= 60) clearInterval(watch); // 30 s
+  }, 500);
+  window.addEventListener("location-changed", registerCard);
+} else {
+  registerCard();
 }
