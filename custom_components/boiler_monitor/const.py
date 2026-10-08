@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 DOMAIN = "boiler_monitor"
-VERSION = "1.1.4"
+VERSION = "1.2.0"
 
 # Config (entities) — set in config flow
 CONF_NAME = "name"
@@ -17,6 +17,8 @@ CONF_SEASON_STATE = "season_state"
 CONF_FLOW_SETPOINT = "flow_setpoint_entity"
 CONF_THERMOREG = "thermoregulation_entity"
 CONF_PRESSURE = "pressure_entity"
+CONF_THERMOSTAT = "thermostat_entity"
+CONF_WEATHER = "weather_entity"
 
 # Options (tuning) — editable later
 CONF_SHORT_CYCLE_MIN = "short_cycle_minutes"
@@ -47,6 +49,7 @@ DEFAULT_PRESSURE_MAX = 2.5
 CYCLE_RETENTION_HOURS = 7 * 24
 DAILY_RETENTION_DAYS = 60
 SAMPLE_INTERVAL_SECONDS = 60
+COMFORT_DAYS = 14
 
 STORAGE_VERSION = 1
 

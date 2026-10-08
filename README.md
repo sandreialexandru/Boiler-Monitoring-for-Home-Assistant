@@ -55,6 +55,8 @@ It works with any boiler. All it needs is an entity that tells it when the burne
 | 🌡️ **Flow/return ΔT** | live, and as a daily average |
 | 🎯 **Flow target vs actual** | compares the real flow temperature with the boiler's setpoint and knows whether the boiler runs on **weather compensation** (automatic thermoregulation) or a **fixed flow temperature**. The card draws the real heating curve, or the fixed flow line |
 | 🧯 **Pressure** | heating-circuit pressure with low/high alert (all year) and a 7-day trend to spot slow leaks |
+| 🛋️ **Comfort vs outdoor** | compares the rooms with the thermostat setting, hour by hour, and gives a plain verdict: *slope too low / too high*, *offset too low / too high*, or *curve OK*, with a confidence level |
+| ⏱️ **Warm-up time & pre-heat** | learns how many minutes the house needs per °C at each outdoor temperature, and when heating must start to reach a temperature at a given time (with the weather forecast) |
 | 🏠 **Heating effect** | measures how much the rooms actually warmed after the burner started (°C/h) and alerts when the boiler burns without effect |
 | 📈 **Outdoor correlation** | daily burn hours vs outdoor temperature, linear regression, **balance point**, **burn hours per degree-day** |
 | ❄️ **Season gating** | optionally pauses all monitoring outside the heating season, so domestic-hot-water starts in summer don't count |
@@ -97,6 +99,8 @@ The card is registered automatically, so you don't need to add a dashboard resou
 | Flow target / setpoint sensor | – | The flow temperature the boiler aims for (e.g. Ariston *CH flow setpoint temp*). Enables flow-vs-target and the heating-curve chart |
 | Automatic thermoregulation entity | – | Switch that turns weather compensation on/off (e.g. Ariston *automatic thermoregulation*). ON = curve, OFF = fixed flow. The card adapts to it |
 | Heating circuit pressure sensor | – | In bar (e.g. Ariston *heating circuit pressure*). Enables the pressure alert and the 7-day trend |
+| Room thermostat (climate) | – | The climate entity that decides when to heat (e.g. a Generic Thermostat). Its target temperature is the comfort reference. Enables the comfort verdict and the pre-heat time. Without indoor sensors, its current temperature is used as the room temperature |
+| Weather forecast | – | A weather entity with an hourly forecast (e.g. Tomorrow.io). Lets `estimate_preheat` use the forecast outdoor temperature |
 | Heating-season entity / state | – | e.g. `input_boolean.heating_season` = `on`, `climate.x` = `heat`, or an `input_select` option. Leave it empty to monitor all year |
 
 Entities that need a sensor you didn't configure are simply not created.
@@ -144,6 +148,10 @@ All entities belong to one device named after your integration. The examples use
 | `sensor.centrala_flow_vs_target_24h` | °C | Average of actual flow − target while burning, last 24 h. The first 5 minutes of each burn (warm-up) are ignored *(needs flow + setpoint)* |
 | `sensor.centrala_heating_curve_slope` | °C/°C | How many °C the flow target rises for each °C colder outside, fitted from the last 7 days in weather-compensation mode *(needs setpoint + outdoor)* |
 | `sensor.centrala_pressure_change_7d` | bar | Pressure now vs the oldest day of the last week. A steady negative value means a slow leak *(needs pressure)* |
+| `sensor.centrala_comfort_verdict` | – | `ok`, `slope_low`, `slope_high`, `offset_low`, `offset_high` or `insufficient_data`. Attributes hold the numbers behind it *(needs thermostat + outdoor)* |
+| `sensor.centrala_comfort_gap_24h` | °C | Average of rooms − thermostat target over the last 24 steady hours *(needs thermostat)* |
+| `sensor.centrala_heat_up_time_per_degc` | min/°C | How long the house needs to warm up by 1 °C at the current outdoor temperature *(needs indoor sensors or thermostat)* |
+| `sensor.centrala_pre_heat_time` | min | How long it would take, from now, to reach the thermostat target *(needs thermostat)* |
 
 ### Binary sensors
 
@@ -168,6 +176,8 @@ show_timeline: true              # 24 h burner timeline (short cycles in red)
 show_daily: true                 # last 14 days: burn hours per day + outdoor avg
 show_correlation: true           # burn vs outdoor scatter + regression + balance point
 show_curve: true                 # heating curve (weather compensation) or fixed-flow chart
+show_comfort: true               # comfort vs outdoor + tuning verdict (needs a thermostat)
+show_heatup: true                # how fast the house warms up + pre-heat time
 ```
 
 ### Compact card
@@ -189,7 +199,9 @@ The compact card shows the status, active alerts as icons, four key numbers and 
 5. **Last 24 hours**: every burn as a bar.
 6. **Last 14 days**: burn time per day.
 7. **Heating curve / Fixed flow temperature**, if you configured a setpoint sensor.
-8. **Burn vs outdoor**: one dot per full day.
+8. **Comfort vs outdoor**, if you configured a thermostat: the verdict box, then one dot per hour.
+9. **Warming up the house**: one dot per measured warm-up, and the pre-heat time.
+10. **Burn vs outdoor**: one dot per full day.
 
 Durations are always in hours and minutes (`2 h 14 min`, `45 min`), never decimal hours. Tapping a value opens the more-info dialog of the underlying entity. The card follows your theme (light/dark), works in masonry and sections views, and has a visual editor.
 
@@ -202,6 +214,8 @@ Hover any bar, dot or timeline segment with the mouse, or **tap** it on a phone 
 | Last 24 hours (a segment) | start – end time, burn duration, whether it was a short cycle |
 | Last 14 days (a bar) / Burn vs outdoor (a dot) | the day, burn time, cycles (and how many were short), average outdoor temperature, condensing %, average ΔT |
 | Heating curve (a dot) | the day and hour, outdoor temperature, target flow, actual flow, actual − target, regulation mode |
+| Comfort vs outdoor (a dot) | the day and hour, outdoor, indoor, thermostat target, indoor − target, burner on %, short cycles |
+| Warming up the house (a dot) | when it started, outdoor, from → to °C, how long it took, minutes per °C |
 
 <p align="center">
   <img src="docs/images/tooltip-day.png" width="300" alt="Day tooltip">
@@ -318,6 +332,41 @@ The blue circles should stay close to the line. The chart also makes one thing v
 
 Every change of mode is written to the CSV log (`MODE`), and so is every change of the fixed temperature (`SETPOINT`), so you can tell what changed and when.
 
+### Comfort vs outdoor
+
+A well-tuned heating curve keeps the house at the thermostat setting **in any weather**. This chart checks exactly that.
+
+- **Each dot is one hour**: outdoor temperature (horizontal) and *rooms − thermostat target* (vertical). 0 means the house was exactly at the setting.
+- **Green band** = comfort zone (±0.5 °C). **Blue** dots = colder than set, **orange** = warmer than set.
+- **Dashed line**: the trend. Flat = the same comfort whatever the weather.
+- Hours in which you changed the thermostat setting, and the hour right after raising it (the house warming up after a night set-back), are **left out**, because there the house is *supposed* to be below the setting.
+
+**The verdict** combines the rooms with what the burner was doing. With an on/off thermostat in front of the boiler, a curve set too **high** never shows up as a warm house (the thermostat switches it off), so it is read from short cycles and overshoot instead. A curve set too **low** shows up as a house that can't reach the setting in cold weather while the burner runs almost non-stop.
+
+| Verdict | What it saw | What to do (weather compensation) | What to do (fixed flow) |
+|---|---|---|---|
+| ✅ **Curve looks right** | at the setting in cold and mild weather | nothing | nothing |
+| ⬆️ **Slope too low** | below the setting when it's cold, burner on ≥ 80 % of the time; fine when mild | slope +0.1 … +0.2 | raise the fixed flow temperature, or switch thermoregulation on |
+| ⬇️ **Slope too high** | above the setting when it's cold | slope −0.1 … −0.2 | lower the fixed flow temperature |
+| ⬆️ **Offset too low** | below the setting in all weather | offset +1 … +2 °C | raise the fixed flow temperature |
+| ⬇️ **Offset too high** | short cycles or overshoot in mild weather | offset −1 … −2 °C | lower the fixed flow, or switch thermoregulation on |
+| ⏳ **Not enough data** | fewer than 24 steady hours, or outdoor temperatures too close together (< 4 °C apart) | wait | wait |
+
+"In cold weather" means the coldest third of the hours, "mild" the warmest third. **Confidence** goes up with more hours and a wider range of outdoor temperatures. Under the verdict you see the median gap in cold and in mild weather and how much the burner ran in the cold hours.
+
+### Warming up the house
+
+Every time heating starts after **at least 1 h off**, with the rooms **at least 0.5 °C below** the thermostat target (typically in the morning after a night set-back), the integration measures how long the rooms take to reach the target. That gives **minutes per °C** at the outdoor temperature of the moment. It ignores warm-ups that rise less than 0.4 °C, and gives up after 4 h.
+
+- **Each dot is one warm-up**: outdoor temperature (horizontal) and minutes per °C (vertical). Dots should go **up to the left**: the colder it is outside, the slower the house warms up.
+- **Dashed line**: the fitted rule, used to predict the warm-up time at any outdoor temperature.
+- **"34 min per °C at 3 °C outside"**: the rule applied to the current outdoor temperature.
+- **"25 min to reach 21 °C from now"**: from the current room temperature to the thermostat target.
+
+It needs a few warm-ups to be useful. If you keep the same temperature day and night there are fewer warm-ups to learn from.
+
+**Pre-heat for a given time**: the `boiler_monitor.estimate_preheat` action returns when to start heating to reach a temperature at a given time. With a weather entity configured it uses the **forecast** outdoor temperature. See [the example](#example-pre-heat-for-the-morning) below.
+
 ### Burn vs outdoor
 
 This chart answers one question: **how long must the boiler burn in a day, given how cold it was outside?**
@@ -366,9 +415,68 @@ With 44 min per degree-day, the 15 degree-day day needs 15 × 44 = 660 min = **1
 
 Ready-to-use automations (an actionable alert, a logbook entry per cycle, a daily summary) are in [`examples/automations.yaml`](examples/automations.yaml).
 
-### Service
+### Actions (services)
 
 `boiler_monitor.reset_statistics` clears stored cycles and statistics. Pass `entry_id` to limit it to one boiler.
+
+`boiler_monitor.estimate_preheat` returns how long the house needs to warm up, and when to start:
+
+```yaml
+action: boiler_monitor.estimate_preheat
+data:
+  target_temperature: 21   # optional, default: the thermostat target
+  at: "07:00"              # optional, the next 07:00
+response_variable: preheat
+```
+
+Response:
+
+```yaml
+target: 21.0
+indoor: 19.2
+outdoor: 1.0
+outdoor_source: forecast   # or "now"
+rate_min_per_degree: 34.0
+minutes: 61
+at: "2026-11-11T07:00:00+02:00"
+start_at: "2026-11-11T05:59:00+02:00"
+start_now: false
+events: 14
+```
+
+#### Example: pre-heat for the morning
+
+Night set-back to 18 °C, and 21 °C at exactly 07:00, starting earlier when it's colder:
+
+```yaml
+- alias: "Heating – morning pre-heat"
+  triggers:
+    - trigger: time_pattern
+      minutes: "/5"
+  conditions:
+    - condition: time
+      after: "03:00:00"
+      before: "07:00:00"
+    - condition: numeric_state
+      entity_id: climate.termostat
+      attribute: temperature
+      below: 21
+  actions:
+    - action: boiler_monitor.estimate_preheat
+      data:
+        target_temperature: 21
+        at: "07:00"
+      response_variable: preheat
+    - if:
+        - condition: template
+          value_template: "{{ preheat.start_now }}"
+      then:
+        - action: climate.set_temperature
+          target:
+            entity_id: climate.termostat
+          data:
+            temperature: 21
+```
 
 ### CSV log
 
@@ -395,6 +503,9 @@ time;event;burn_min;off_min;outdoor;flow;return;indoor_avg;extra
 - **Heating curve.** The target and outdoor temperature are averaged per hour. Hours in weather-compensation mode are fitted with a straight line. It needs at least 6 hours spanning ≥ 3 °C outdoor. Use the same outdoor sensor the boiler uses (e.g. Ariston *Outside temp*) if you want the chart to match the boiler's own curve exactly.
 - **Pressure** is sampled all year (also outside the heating season). The trend compares hourly averages, so heat-up swings are smoothed out.
 - **Storage.** Cycles are kept for 7 days and hourly aggregates for 60 days, in `.storage/boiler_monitor.<entry_id>`. The large attributes (timeline, daily) are excluded from the recorder, so they don't bloat your database.
+
+- **Comfort.** Every minute (in season) the room temperature and the thermostat target are averaged per hour, with the target's min and max. Steady hours (target unchanged, not the hour after a target increase) give one point: outdoor, rooms − target, burner share of the hour, short cycles. The verdict uses the median gap in the coldest and the warmest third of those hours over the last 14 days, the burner share in the cold hours and the short cycles in the mild ones. It needs ≥ 24 steady hours and ≥ 4 °C between the 10th and 90th percentile of outdoor temperature.
+- **Warm-up.** A warm-up starts when the burner comes on after ≥ 1 h off with the rooms ≥ 0.5 °C below target, and ends when the rooms reach target − 0.1 °C, when the burner stops, or after 4 h. Valid if the rooms rose ≥ 0.4 °C in ≥ 5 min. Minutes per °C vs outdoor is fitted with a straight line (needs 3 warm-ups ≥ 3 °C apart, otherwise the median is used). Predictions stay between half the fastest and 1.5× the slowest warm-up seen. Warm-ups are kept for 60 days and written to the CSV log (`HEATUP`).
 
 ## Using it to tune your heating curve
 

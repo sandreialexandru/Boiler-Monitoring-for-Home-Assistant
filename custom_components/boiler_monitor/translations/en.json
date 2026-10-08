@@ -14,6 +14,8 @@
           "thermoregulation_entity": "Automatic thermoregulation entity – optional",
           "outdoor_temp_entity": "Outdoor temperature sensor (°C) – optional",
           "indoor_temp_entities": "Indoor temperature sensors (°C) – optional",
+          "thermostat_entity": "Room thermostat (climate) – optional",
+          "weather_entity": "Weather forecast – optional",
           "pressure_entity": "Heating circuit pressure sensor (bar) – optional",
           "season_entity": "Heating-season entity – optional",
           "season_state": "State meaning \"heating season active\" (text)"
@@ -28,6 +30,8 @@
           "thermoregulation_entity": "The switch that turns the boiler's weather compensation on/off – e.g. \"Ariston automatic thermoregulation\". ON = the flow target follows the outdoor temperature (curve); OFF = fixed flow temperature. The card and charts adapt to the mode.",
           "outdoor_temp_entity": "Outside air temperature, in °C. Needed for the outdoor correlation, balance point and burn hours per degree-day.",
           "indoor_temp_entities": "One or more room temperature sensors, in °C. Their average (unavailable sensors are skipped) is used to check whether heating actually warms the house.",
+          "thermostat_entity": "The climate entity that decides when to heat, e.g. your Generic Thermostat. Its target temperature is the comfort reference: needed for the comfort-vs-outdoor verdict and the pre-heat time. If no indoor sensors are set, its current temperature is used as the room temperature.",
+          "weather_entity": "A weather entity with an hourly forecast (e.g. Tomorrow.io). Used by the estimate_preheat action to take the forecast outdoor temperature into account. Optional.",
           "pressure_entity": "Water pressure of the heating circuit, in bar – e.g. \"Ariston heating circuit pressure\". Enables the low/high pressure alert and the 7-day pressure trend (slow leak detection). Monitored all year.",
           "season_entity": "Optional. While this entity is NOT in the state below, monitoring is paused (no cycles counted, no alerts) – useful in summer when the boiler only makes hot water. Leave empty to monitor all year.",
           "season_state": "The state of the heating-season entity that means \"heating season active\", e.g. \"on\" (input_boolean / switch), \"heat\" (climate) or the exact option text of an input_select. Ignored if no heating-season entity is selected."
@@ -44,6 +48,8 @@
           "thermoregulation_entity": "Automatic thermoregulation entity – optional",
           "outdoor_temp_entity": "Outdoor temperature sensor (°C) – optional",
           "indoor_temp_entities": "Indoor temperature sensors (°C) – optional",
+          "thermostat_entity": "Room thermostat (climate) – optional",
+          "weather_entity": "Weather forecast – optional",
           "pressure_entity": "Heating circuit pressure sensor (bar) – optional",
           "season_entity": "Heating-season entity – optional",
           "season_state": "State meaning \"heating season active\" (text)"
@@ -57,6 +63,8 @@
           "thermoregulation_entity": "The switch that turns the boiler's weather compensation on/off – e.g. \"Ariston automatic thermoregulation\". ON = the flow target follows the outdoor temperature (curve); OFF = fixed flow temperature. The card and charts adapt to the mode.",
           "outdoor_temp_entity": "Outside air temperature, in °C. Needed for the outdoor correlation, balance point and burn hours per degree-day.",
           "indoor_temp_entities": "One or more room temperature sensors, in °C. Their average (unavailable sensors are skipped) is used to check whether heating actually warms the house.",
+          "thermostat_entity": "The climate entity that decides when to heat, e.g. your Generic Thermostat. Its target temperature is the comfort reference: needed for the comfort-vs-outdoor verdict and the pre-heat time. If no indoor sensors are set, its current temperature is used as the room temperature.",
+          "weather_entity": "A weather entity with an hourly forecast (e.g. Tomorrow.io). Used by the estimate_preheat action to take the forecast outdoor temperature into account. Optional.",
           "pressure_entity": "Water pressure of the heating circuit, in bar – e.g. \"Ariston heating circuit pressure\". Enables the low/high pressure alert and the 7-day pressure trend (slow leak detection). Monitored all year.",
           "season_entity": "Optional. While this entity is NOT in the state below, monitoring is paused (no cycles counted, no alerts) – useful in summer when the boiler only makes hot water. Leave empty to monitor all year.",
           "season_state": "The state of the heating-season entity that means \"heating season active\", e.g. \"on\" (input_boolean / switch), \"heat\" (climate) or the exact option text of an input_select. Ignored if no heating-season entity is selected."
@@ -164,6 +172,26 @@
       },
       "pressure_change_7d": {
         "name": "Pressure change (7d)"
+      },
+      "comfort_verdict": {
+        "name": "Comfort verdict",
+        "state": {
+          "ok": "Curve OK",
+          "slope_low": "Slope too low",
+          "slope_high": "Slope too high",
+          "offset_low": "Offset too low",
+          "offset_high": "Offset too high",
+          "insufficient_data": "Not enough data yet"
+        }
+      },
+      "comfort_gap": {
+        "name": "Comfort gap (24h)"
+      },
+      "heatup_rate": {
+        "name": "Heat-up time per °C"
+      },
+      "preheat_time": {
+        "name": "Pre-heat time"
       }
     },
     "binary_sensor": {
@@ -192,6 +220,24 @@
         "entry_id": {
           "name": "Entry ID",
           "description": "Limit to these config entries (empty = all)."
+        }
+      }
+    },
+    "estimate_preheat": {
+      "name": "Estimate pre-heat",
+      "description": "Estimates how long the house needs to warm up to a temperature and when heating should start. Returns a response for use in automations.",
+      "fields": {
+        "entry_id": {
+          "name": "Boiler",
+          "description": "Which boiler (default: the first one)."
+        },
+        "target_temperature": {
+          "name": "Target temperature",
+          "description": "Room temperature to reach, in °C (default: the thermostat's current target)."
+        },
+        "at": {
+          "name": "At",
+          "description": "Time the target must be reached (e.g. 07:00). Without it, only the duration is returned."
         }
       }
     }

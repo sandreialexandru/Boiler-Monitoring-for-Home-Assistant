@@ -1,6 +1,7 @@
 """Boiler Monitor — advanced burner/condensation monitoring for Home Assistant."""
 from __future__ import annotations
 
+from datetime import timedelta
 import logging
 from pathlib import Path
 
@@ -8,7 +9,16 @@ import voluptuous as vol
 
 from homeassistant.config_entries import ConfigEntry, ConfigEntryState
 from homeassistant.const import EVENT_HOMEASSISTANT_STARTED, Platform
-from homeassistant.core import CoreState, Event, HomeAssistant, ServiceCall
+from homeassistant.core import (
+    CoreState,
+    Event,
+    HomeAssistant,
+    ServiceCall,
+    ServiceResponse,
+    SupportsResponse,
+)
+from homeassistant.exceptions import ServiceValidationError
+from homeassistant.util import dt as dt_util
 from homeassistant.helpers import config_validation as cv
 
 from .const import CARD_URL, DOMAIN, VERSION
@@ -31,6 +41,42 @@ async def async_setup(hass: HomeAssistant, config: dict) -> bool:
         for entry in hass.config_entries.async_entries(DOMAIN):
             if entry.state is ConfigEntryState.LOADED and (not ids or entry.entry_id in ids):
                 await entry.runtime_data.async_reset()
+
+    async def _estimate(call: ServiceCall) -> ServiceResponse:
+        entries = [
+            e for e in hass.config_entries.async_entries(DOMAIN)
+            if e.state is ConfigEntryState.LOADED
+            and (not call.data.get("entry_id") or e.entry_id == call.data["entry_id"])
+        ]
+        if not entries:
+            raise ServiceValidationError("No loaded Boiler Monitor entry found")
+        at = call.data.get("at")
+        when = None
+        if at is not None:
+            if isinstance(at, str):
+                at = dt_util.parse_datetime(at) or dt_util.parse_time(at)
+            if hasattr(at, "hour") and not hasattr(at, "year"):  # a time of day
+                now = dt_util.now()
+                when = now.replace(hour=at.hour, minute=at.minute, second=0, microsecond=0)
+                if when <= now:
+                    when = when + timedelta(days=1)
+            elif at is not None:
+                when = dt_util.as_local(at if at.tzinfo else at.replace(tzinfo=dt_util.DEFAULT_TIME_ZONE))
+        return await entries[0].runtime_data.async_estimate_preheat(call.data.get("target_temperature"), when)
+
+    hass.services.async_register(
+        DOMAIN,
+        "estimate_preheat",
+        _estimate,
+        schema=vol.Schema(
+            {
+                vol.Optional("entry_id"): cv.string,
+                vol.Optional("target_temperature"): vol.Coerce(float),
+                vol.Optional("at"): vol.Any(cv.datetime, cv.time, cv.string),
+            }
+        ),
+        supports_response=SupportsResponse.ONLY,
+    )
 
     hass.services.async_register(
         DOMAIN,
