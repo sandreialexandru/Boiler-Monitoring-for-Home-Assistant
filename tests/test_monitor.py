@@ -339,21 +339,45 @@ async def test_dump_card_fixture(hass: HomeAssistant, freezer):
     if not out:
         pytest.skip("CARD_FIXTURE not set")
     random.seed(4)
+    await hass.config.async_set_time_zone("Europe/Bucharest")
     freezer.move_to("2026-10-22 00:00:30+03:00")
     temps(hass)
+    thermostat(hass, target=19.0)
     await burner(hass, False)
     ariston(hass, thermo="on")
-    await setup(hass, ARISTON, {**OPTIONS, "notify_service": ""})
+    await setup(hass, {**ARISTON, "thermostat_entity": "climate.termostat"}, {**OPTIONS, "notify_service": ""})
     outs = [9, 7, 6, 8, 4, 3, 5, 2, 1, 3, 6, 4, 2, 0]
+    room = 19.0
     for day, o in enumerate(outs):
         for h in range(24):
             hour_out = o + (3 if 11 <= h <= 17 else -1)
             tgt = round(38 + 1.4 * (12 - hour_out) + random.uniform(-0.5, 0.5), 1)
+            night = h < 5 or h >= 23
+            sp = 19.0 if night else 21.0
+            thermostat(hass, target=sp, current=room)
             ariston(hass, setpoint=tgt, thermo="on", pressure=round(1.62 - 0.004 * day, 2))
-            temps(hass, out=hour_out, flow=round(tgt - 1.5 + random.uniform(-2, 1), 1), ret=44 + (h % 5), liv=20.8, dor=20.4)
-            burn = max(2, int(36 - 2.6 * hour_out + random.randint(-4, 4)))
+            # curve a bit too low: the house sags when it's cold outside
+            steady = sp - (0.18 * (3 - hour_out) if hour_out < 3 else 0) + random.uniform(-0.15, 0.15)
+            flow = round(tgt - 1.5 + random.uniform(-2, 1), 1)
             if day == len(outs) - 1 and h == 15:
                 break
+            if night:
+                room = max(19.0, room - 0.4)
+                temps(hass, out=hour_out, flow=flow, ret=44, liv=room, dor=room - 0.3)
+                await advance(hass, freezer, 60)
+                continue
+            if h == 5:  # morning warm-up from the night set-back, slower when colder
+                per_deg = 16 + (8 - hour_out) * 1.6 + random.uniform(-2, 2)
+                await burner(hass, True)
+                for _m in range(60):
+                    room = min(steady, room + 1 / per_deg)
+                    temps(hass, out=hour_out, flow=flow, ret=46, liv=room, dor=room - 0.3)
+                    await advance(hass, freezer, 1)
+                await burner(hass, False)
+                continue
+            room = steady
+            temps(hass, out=hour_out, flow=flow, ret=44 + (h % 5), liv=room, dor=room - 0.3)
+            burn = max(2, int(36 - 2.6 * hour_out + random.randint(-4, 4)))
             if h in (6, 7) and day >= 12:  # morning short-cycling
                 for _ in range(3):
                     await burner(hass, True); await advance(hass, freezer, 4)
@@ -365,7 +389,8 @@ async def test_dump_card_fixture(hass: HomeAssistant, freezer):
             await burner(hass, False); await advance(hass, freezer, 30 - burn // 2)
             await burner(hass, True); await advance(hass, freezer, burn - burn // 2)
             await burner(hass, False); await advance(hass, freezer, 30 - (burn - burn // 2))
-    temps(hass, out=3, flow=66, ret=55, liv=20.9, dor=20.5)
+    temps(hass, out=3, flow=66, ret=55, liv=20.4, dor=20.1)
+    thermostat(hass, target=21.0, current=20.3)
     await burner(hass, True)
     await advance(hass, freezer, 17)
     s = st(hass, "sensor.centrala_status")
@@ -514,3 +539,126 @@ async def test_card_resource_registration(hass: HomeAssistant):
     await _ensure_lovelace_resource(hass, f"{CARD_URL}?v=9.9.9")
     items = [i for i in res.async_items() if i["url"].startswith(CARD_URL)]
     assert len(items) == 1 and items[0]["url"].endswith("v=9.9.9")
+
+
+THERMO = {**DATA, "thermostat_entity": "climate.termostat"}
+
+
+def thermostat(hass, target=21.0, current=21.0, mode="heat"):
+    hass.states.async_set("climate.termostat", mode, {"temperature": target, "current_temperature": current})
+
+
+async def test_comfort_verdict_slope_low(hass: HomeAssistant, freezer):
+    """Cold outside -> house can't reach the setpoint while burning flat out -> slope too low."""
+    freezer.move_to("2026-11-10 00:00:30+02:00")
+    thermostat(hass)
+    temps(hass)
+    await burner(hass, False)
+    await setup(hass, THERMO, {**OPTIONS, "notify_service": ""})
+    st0 = st(hass, "sensor.centrala_comfort_verdict")
+    assert st0.state == "insufficient_data"
+    for h in range(60):
+        out = [12, 8, 4, 0, -4][(h // 6) % 5]
+        room = 21.0 - (0.25 * (4 - out) if out < 4 else 0.0)   # too cold when it's cold
+        duty = 55 if out <= 0 else 25                           # minutes per hour burning
+        temps(hass, out=out, liv=room, dor=room)
+        await burner(hass, True)
+        await advance(hass, freezer, duty)
+        await burner(hass, False)
+        await advance(hass, freezer, 60 - duty)
+    v = st(hass, "sensor.centrala_comfort_verdict")
+    assert v.state == "slope_low", v.attributes
+    assert v.attributes["gap_cold"] < -0.5
+    assert v.attributes["confidence"] in ("low", "medium", "high")
+    assert float(st(hass, "sensor.centrala_comfort_gap_24h").state) < 0
+
+
+async def test_comfort_verdict_offset_high_and_setback_ignored(hass: HomeAssistant, freezer):
+    """Short cycles in mild weather -> offset too high; night set-back hours are not counted as 'cold'."""
+    freezer.move_to("2026-11-10 00:00:30+02:00")
+    thermostat(hass)
+    temps(hass)
+    await burner(hass, False)
+    await setup(hass, THERMO, {**OPTIONS, "notify_service": ""})
+    for h in range(60):
+        out = [14, 10, 6, 2][(h // 6) % 4]
+        hour = h % 24
+        setback = 0 <= hour < 5
+        thermostat(hass, target=18.0 if setback else 21.0)
+        temps(hass, out=out, liv=18.0 if setback else 21.2, dor=18.0 if setback else 21.2)
+        await hass.async_block_till_done()
+        if out >= 10 and not setback:  # mild: on/off every few minutes
+            for _ in range(6):
+                await burner(hass, True); await advance(hass, freezer, 3)
+                await burner(hass, False); await advance(hass, freezer, 7)
+        else:
+            await burner(hass, True); await advance(hass, freezer, 20)
+            await burner(hass, False); await advance(hass, freezer, 40)
+    v = st(hass, "sensor.centrala_comfort_verdict")
+    assert v.state == "offset_high", v.attributes
+    # set-back hours (gap -3) must not drag the cold median down
+    assert v.attributes["gap_cold"] > -0.5
+
+
+async def test_heatup_model_and_preheat_service(hass: HomeAssistant, freezer):
+    freezer.move_to("2026-11-10 00:00:30+02:00")
+    thermostat(hass, target=21.0)
+    temps(hass)
+    await burner(hass, False)
+    await setup(hass, THERMO, {**OPTIONS, "notify_service": ""})
+    # 4 mornings: house at 19 °C after the night, warms 2 °C; slower when colder
+    for day, out in enumerate([10, 6, 2, -2]):
+        minutes_per_deg = 15 + (10 - out) * 1.5    # 15 at 10 °C ... 33 at -2 °C
+        temps(hass, out=out, liv=19.0, dor=19.0)
+        await advance(hass, freezer, 120)          # long pause
+        await burner(hass, True)
+        room = 19.0
+        while room < 21.0:
+            room = min(21.0, room + 1 / minutes_per_deg)
+            temps(hass, out=out, liv=room, dor=room)
+            await advance(hass, freezer, 1)
+        await burner(hass, False)
+        await advance(hass, freezer, 24 * 60 - 120 - int(2 * minutes_per_deg) - 2)
+    rate = st(hass, "sensor.centrala_heat_up_time_per_degc")
+    assert float(rate.attributes["n"]) == 4
+    assert rate.attributes["b"] < 0  # colder -> slower
+    # Now: 4 °C outside, house at 19.5 °C, target 21 °C at a given time
+    temps(hass, out=4, liv=19.5, dor=19.5)
+    await advance(hass, freezer, 1)  # next sample picks up the new values
+    expected_rate = 15 + (10 - 4) * 1.5  # 24 min/°C
+    assert float(st(hass, "sensor.centrala_heat_up_time_per_degc").state) == pytest.approx(expected_rate, abs=2)
+    assert float(st(hass, "sensor.centrala_pre_heat_time").state) == pytest.approx(1.5 * expected_rate, abs=4)
+    resp = await hass.services.async_call(
+        DOMAIN, "estimate_preheat", {"target_temperature": 21, "at": "07:00"}, blocking=True, return_response=True
+    )
+    assert resp["minutes"] == pytest.approx(1.5 * expected_rate, abs=4)
+    assert resp["start_at"] < resp["at"] and resp["outdoor_source"] == "now"
+
+
+async def test_preheat_uses_weather_forecast(hass: HomeAssistant, freezer):
+    from homeassistant.core import SupportsResponse
+    await hass.config.async_set_time_zone("Europe/Bucharest")
+    freezer.move_to("2026-11-10 22:00:00+02:00")
+    thermostat(hass, target=21.0)
+    temps(hass, out=8, liv=19.0, dor=19.0)
+    await burner(hass, False)
+    entry = await setup(hass, {**THERMO, "weather_entity": "weather.home"}, {**OPTIONS, "notify_service": ""})
+    # rate = 20 + (-1.5)*out  -> 32 min/°C at -8 °C, 8 min/°C at 8 °C
+    entry.runtime_data.heatups = [
+        {"ts": 1, "out": o, "rate": 20 - 1.5 * o, "rise": 1, "minutes": 20 - 1.5 * o} for o in (-8, 0, 8)
+    ]
+
+    async def forecasts(call):
+        start = dt_util.now().replace(minute=0, second=0, microsecond=0)
+        return {"weather.home": {"forecast": [
+            {"datetime": (start + timedelta(hours=h)).isoformat(), "temperature": 8 - 2 * h} for h in range(24)
+        ]}}
+
+    hass.services.async_register("weather", "get_forecasts", forecasts, supports_response=SupportsResponse.ONLY)
+    resp = await hass.services.async_call(
+        DOMAIN, "estimate_preheat", {"target_temperature": 21, "at": "02:00"}, blocking=True, return_response=True
+    )
+    # at 02:00 the forecast says 8 - 2*4 = 0 °C -> 20 min/°C, 2 °C to go -> 40 min
+    assert resp["outdoor_source"] == "forecast" and resp["outdoor"] == 0
+    assert resp["minutes"] == pytest.approx(40, abs=1)
+    assert resp["start_at"].startswith("2026-11-11T01:20")

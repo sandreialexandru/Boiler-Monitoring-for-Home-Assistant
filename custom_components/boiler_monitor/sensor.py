@@ -23,6 +23,8 @@ from .const import (
     CONF_PRESSURE,
     CONF_RETURN_TEMP,
     CONF_THERMOREG,
+    CONF_THERMOSTAT,
+    CONF_WEATHER,
     DOMAIN,
     MODE_CURVE,
     MODE_FIXED,
@@ -31,6 +33,7 @@ from .const import (
     STATUS_OFF_SEASON,
     STATUS_UNAVAILABLE,
 )
+from .comfort import VERDICTS
 from .entity import BoilerEntity
 from .monitor import BoilerMonitor
 
@@ -59,6 +62,10 @@ SENSORS: tuple[BoilerSensorDescription, ...] = (
     BoilerSensorDescription(key="flow_deviation", stat="flow_deviation", translation_key="flow_deviation", icon="mdi:thermometer-chevron-up", device_class=SensorDeviceClass.TEMPERATURE, state_class=M, native_unit_of_measurement=UnitOfTemperature.CELSIUS, suggested_display_precision=1),
     BoilerSensorDescription(key="curve_slope", stat="curve_slope", translation_key="curve_slope", icon="mdi:slope-uphill", state_class=M, native_unit_of_measurement="°C/°C", suggested_display_precision=2),
     BoilerSensorDescription(key="pressure_change_7d", stat="pressure_change_7d", translation_key="pressure_change_7d", icon="mdi:gauge", device_class=SensorDeviceClass.PRESSURE, native_unit_of_measurement=UnitOfPressure.BAR, suggested_display_precision=2),
+    BoilerSensorDescription(key="comfort_verdict", stat="comfort_verdict", translation_key="comfort_verdict", icon="mdi:home-thermometer-outline", device_class=SensorDeviceClass.ENUM, options=VERDICTS),
+    BoilerSensorDescription(key="comfort_gap", stat="comfort_gap_24h", translation_key="comfort_gap", icon="mdi:thermometer-minus", device_class=SensorDeviceClass.TEMPERATURE, state_class=M, native_unit_of_measurement=UnitOfTemperature.CELSIUS, suggested_display_precision=1),
+    BoilerSensorDescription(key="heatup_rate", stat="heatup_rate", translation_key="heatup_rate", icon="mdi:timer-sand", state_class=M, native_unit_of_measurement="min/°C", suggested_display_precision=0),
+    BoilerSensorDescription(key="preheat_time", stat="preheat_minutes", translation_key="preheat_time", icon="mdi:clock-start", device_class=SensorDeviceClass.DURATION, native_unit_of_measurement=UnitOfTime.MINUTES, suggested_display_precision=0),
     BoilerSensorDescription(key="burn_per_hdd", stat="burn_per_hdd", translation_key="burn_per_hdd", icon="mdi:chart-line", state_class=M, native_unit_of_measurement="h/°C·day", suggested_display_precision=3),
 )
 
@@ -81,6 +88,13 @@ REQUIRES: dict[str, tuple[str, ...]] = {
     "flow_deviation": (CONF_FLOW_TEMP, CONF_FLOW_SETPOINT),
     "curve_slope": (CONF_FLOW_SETPOINT, CONF_OUTDOOR_TEMP),
     "pressure_change_7d": (CONF_PRESSURE,),
+    "comfort_verdict": (CONF_THERMOSTAT, CONF_OUTDOOR_TEMP),
+    "comfort_gap": (CONF_THERMOSTAT,),
+    "preheat_time": (CONF_THERMOSTAT,),
+}
+# Need at least ONE of these
+REQUIRES_ANY: dict[str, tuple[str, ...]] = {
+    "heatup_rate": (CONF_INDOOR_TEMPS, CONF_THERMOSTAT),
 }
 
 
@@ -89,7 +103,9 @@ async def async_setup_entry(hass: HomeAssistant, entry, async_add_entities: AddE
     cfg = monitor.cfg
     ents: list[SensorEntity] = [BoilerStatusSensor(monitor, STATUS_DESC)]
     for d in SENSORS:
-        if all(cfg.get(k) for k in REQUIRES.get(d.key, ())):
+        if all(cfg.get(k) for k in REQUIRES.get(d.key, ())) and (
+            d.key not in REQUIRES_ANY or any(cfg.get(k) for k in REQUIRES_ANY[d.key])
+        ):
             ents.append(BoilerStatSensor(monitor, d))
     async_add_entities(ents)
 
@@ -103,7 +119,14 @@ class BoilerStatSensor(BoilerEntity, SensorEntity):
 
     @property
     def extra_state_attributes(self) -> dict[str, Any] | None:
-        if self.entity_description.key != "condensing_ratio":
+        key = self.entity_description.key
+        if key == "comfort_verdict":
+            return self.monitor.comfort()
+        if key == "heatup_rate":
+            model = self.monitor.heatup_model() or {}
+            last = self.monitor.heatups[-1] if self.monitor.heatups else None
+            return {**model, "last_event": last}
+        if key != "condensing_ratio":
             return None
         s = self.monitor.stats()
         return {
@@ -118,7 +141,7 @@ class BoilerStatusSensor(BoilerEntity, SensorEntity):
     """Main entity: status + everything the card needs as attributes."""
 
     _unrecorded_attributes = frozenset(
-        {"timeline", "daily", "regression", "entities", "stats", "thresholds", "curve_points", "curve_fit"}
+        {"timeline", "daily", "regression", "entities", "stats", "thresholds", "curve_points", "curve_fit", "comfort_points", "comfort", "heatups", "heatup_model"}
     )
 
     @property
@@ -162,10 +185,18 @@ class BoilerStatusSensor(BoilerEntity, SensorEntity):
                 "setpoint": cfg.get(CONF_FLOW_SETPOINT),
                 "thermoregulation": cfg.get(CONF_THERMOREG),
                 "pressure": cfg.get(CONF_PRESSURE),
+                "thermostat": cfg.get(CONF_THERMOSTAT),
+                "weather": cfg.get(CONF_WEATHER),
             },
             "timeline": m.timeline(24),
             "daily": m.daily(30),
             "regression": m.regression(),
+            "comfort_points": m.comfort_points() if cfg.get(CONF_THERMOSTAT) else [],
+            "comfort": m.comfort() if cfg.get(CONF_THERMOSTAT) else None,
+            "heatups": m.heatups[-40:],
+            "heatup_model": m.heatup_model(),
+            "room": None if (rt := m.room_temp()) is None else round(rt, 2),
+            "thermostat_setpoint": m.thermostat_setpoint(),
             "curve_points": m.curve_points() if cfg.get(CONF_FLOW_SETPOINT) else [],
             "curve_fit": m.curve_fit() if cfg.get(CONF_FLOW_SETPOINT) else None,
             "entities": entities,

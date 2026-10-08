@@ -14,6 +14,8 @@
           "thermoregulation_entity": "Entitate termoreglare automată – opțional",
           "outdoor_temp_entity": "Senzor temperatură exterioară (°C) – opțional",
           "indoor_temp_entities": "Senzori temperatură interioară (°C) – opțional",
+          "thermostat_entity": "Termostat de cameră (climate) – opțional",
+          "weather_entity": "Prognoză meteo – opțional",
           "pressure_entity": "Senzor presiune circuit încălzire (bar) – opțional",
           "season_entity": "Entitate sezon de încălzire – opțional",
           "season_state": "Starea care înseamnă „sezon de încălzire activ” (text)"
@@ -28,6 +30,8 @@
           "thermoregulation_entity": "Comutatorul care pornește/oprește compensarea climatică a centralei – ex. „Ariston automatic thermoregulation”. PORNIT = turul cerut urmează temperatura exterioară (curbă); OPRIT = tur fix. Cardul și graficele se adaptează la mod.",
           "outdoor_temp_entity": "Temperatura aerului de afară, în °C. Necesar pentru corelarea cu exteriorul, punctul de echilibru și orele de ardere pe grad-zi.",
           "indoor_temp_entities": "Unul sau mai mulți senzori de cameră, în °C. Media lor (senzorii indisponibili sunt ignorați) arată dacă încălzirea chiar încălzește casa.",
+          "thermostat_entity": "Entitatea climate care decide când se încălzește, ex. Generic Thermostat. Temperatura ei setată e referința de confort: necesară pentru verdictul confort vs exterior și pentru timpul de preîncălzire. Dacă nu ai senzori de interior, temperatura ei curentă e folosită ca temperatură în cameră.",
+          "weather_entity": "O entitate weather cu prognoză orară (ex. Tomorrow.io). Folosită de acțiunea estimate_preheat ca să țină cont de temperatura exterioară prognozată. Opțional.",
           "pressure_entity": "Presiunea apei din circuitul de încălzire, în bar – ex. „Ariston heating circuit pressure”. Activează alerta de presiune mică/mare și tendința pe 7 zile (detectare scurgeri lente). Monitorizată tot anul.",
           "season_entity": "Opțional. Cât timp această entitate NU e în starea de mai jos, monitorizarea e pe pauză (nu se numără cicluri, nu se trimit alerte) – util vara, când centrala face doar apă caldă. Lasă gol pentru monitorizare tot anul.",
           "season_state": "Starea entității de sezon care înseamnă „sezon de încălzire activ”, ex. „on” (input_boolean / switch), „heat” (climate) sau textul exact al opțiunii unui input_select. Ignorat dacă nu e aleasă o entitate de sezon."
@@ -44,6 +48,8 @@
           "thermoregulation_entity": "Entitate termoreglare automată – opțional",
           "outdoor_temp_entity": "Senzor temperatură exterioară (°C) – opțional",
           "indoor_temp_entities": "Senzori temperatură interioară (°C) – opțional",
+          "thermostat_entity": "Termostat de cameră (climate) – opțional",
+          "weather_entity": "Prognoză meteo – opțional",
           "pressure_entity": "Senzor presiune circuit încălzire (bar) – opțional",
           "season_entity": "Entitate sezon de încălzire – opțional",
           "season_state": "Starea care înseamnă „sezon de încălzire activ” (text)"
@@ -57,6 +63,8 @@
           "thermoregulation_entity": "Comutatorul care pornește/oprește compensarea climatică a centralei – ex. „Ariston automatic thermoregulation”. PORNIT = turul cerut urmează temperatura exterioară (curbă); OPRIT = tur fix. Cardul și graficele se adaptează la mod.",
           "outdoor_temp_entity": "Temperatura aerului de afară, în °C. Necesar pentru corelarea cu exteriorul, punctul de echilibru și orele de ardere pe grad-zi.",
           "indoor_temp_entities": "Unul sau mai mulți senzori de cameră, în °C. Media lor (senzorii indisponibili sunt ignorați) arată dacă încălzirea chiar încălzește casa.",
+          "thermostat_entity": "Entitatea climate care decide când se încălzește, ex. Generic Thermostat. Temperatura ei setată e referința de confort: necesară pentru verdictul confort vs exterior și pentru timpul de preîncălzire. Dacă nu ai senzori de interior, temperatura ei curentă e folosită ca temperatură în cameră.",
+          "weather_entity": "O entitate weather cu prognoză orară (ex. Tomorrow.io). Folosită de acțiunea estimate_preheat ca să țină cont de temperatura exterioară prognozată. Opțional.",
           "pressure_entity": "Presiunea apei din circuitul de încălzire, în bar – ex. „Ariston heating circuit pressure”. Activează alerta de presiune mică/mare și tendința pe 7 zile (detectare scurgeri lente). Monitorizată tot anul.",
           "season_entity": "Opțional. Cât timp această entitate NU e în starea de mai jos, monitorizarea e pe pauză (nu se numără cicluri, nu se trimit alerte) – util vara, când centrala face doar apă caldă. Lasă gol pentru monitorizare tot anul.",
           "season_state": "Starea entității de sezon care înseamnă „sezon de încălzire activ”, ex. „on” (input_boolean / switch), „heat” (climate) sau textul exact al opțiunii unui input_select. Ignorat dacă nu e aleasă o entitate de sezon."
@@ -164,6 +172,26 @@
       },
       "pressure_change_7d": {
         "name": "Variație presiune (7z)"
+      },
+      "comfort_verdict": {
+        "name": "Verdict confort",
+        "state": {
+          "ok": "Curba e OK",
+          "slope_low": "Panta prea mică",
+          "slope_high": "Panta prea mare",
+          "offset_low": "Offset prea mic",
+          "offset_high": "Offset prea mare",
+          "insufficient_data": "Încă nu sunt destule date"
+        }
+      },
+      "comfort_gap": {
+        "name": "Abatere confort (24h)"
+      },
+      "heatup_rate": {
+        "name": "Timp de încălzire pe °C"
+      },
+      "preheat_time": {
+        "name": "Timp de preîncălzire"
       }
     },
     "binary_sensor": {
@@ -192,6 +220,24 @@
         "entry_id": {
           "name": "Entry ID",
           "description": "Limitează la aceste intrări (gol = toate)."
+        }
+      }
+    },
+    "estimate_preheat": {
+      "name": "Estimează preîncălzirea",
+      "description": "Estimează cât îi trebuie casei să ajungă la o temperatură și când trebuie pornită încălzirea. Returnează un răspuns folosibil în automatizări.",
+      "fields": {
+        "entry_id": {
+          "name": "Centrală",
+          "description": "Care centrală (implicit prima)."
+        },
+        "target_temperature": {
+          "name": "Temperatură țintă",
+          "description": "Temperatura din cameră de atins, în °C (implicit cea setată acum la termostat)."
+        },
+        "at": {
+          "name": "La ora",
+          "description": "Ora la care trebuie atinsă ținta (ex. 07:00). Fără ea se returnează doar durata."
         }
       }
     }

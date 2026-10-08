@@ -25,6 +25,7 @@ from homeassistant.helpers.event import (
 from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util, slugify
 
+from . import comfort as cmf
 from .const import (
     CONF_BURNER,
     CONF_BURNER_ON_STATE,
@@ -48,6 +49,9 @@ from .const import (
     CONF_SEASON_STATE,
     CONF_SHORT_CYCLE_MIN,
     CONF_THERMOREG,
+    CONF_THERMOSTAT,
+    CONF_WEATHER,
+    COMFORT_DAYS,
     CYCLE_RETENTION_HOURS,
     DAILY_RETENTION_DAYS,
     DEFAULT_BURNER_ON_STATE,
@@ -163,6 +167,8 @@ class BoilerMonitor:
         self.burner_on = False
         self.burner_available = True
         self.pressure_problem = False
+        self.heatups: list[dict[str, Any]] = []
+        self._heatup: dict[str, Any] | None = None
         self._last_mode: str | None = None
         self._last_setpoint: float | None = None
         self._stats_cache: dict[str, Any] | None = None
@@ -200,6 +206,7 @@ class BoilerMonitor:
         self.cycles = data.get("cycles", [])
         self.hours = {int(k): v for k, v in data.get("hours", {}).items()}
         self.last_alert = data.get("last_alert", {})
+        self.heatups = data.get("heatups", [])
         last_saved = data.get("saved_at")
 
         now = dt_util.utcnow().timestamp()
@@ -262,6 +269,7 @@ class BoilerMonitor:
             "cycles": self.cycles,
             "hours": {str(k): v for k, v in self.hours.items()},
             "last_alert": self.last_alert,
+            "heatups": self.heatups,
             "saved_at": dt_util.utcnow().timestamp(),
         }
 
@@ -272,6 +280,8 @@ class BoilerMonitor:
         self.cycles = [c for c in self.cycles if c.get("end") is None]
         self.hours = {}
         self.last_alert = {}
+        self.heatups = []
+        self._heatup = None
         self.condensation_lost = self.heating_ineffective = False
         self.last_heating_rate = self.last_rise = None
         await self._store.async_save(self._data_to_save())
@@ -317,6 +327,28 @@ class BoilerMonitor:
         if st is None or st.state in (STATE_UNAVAILABLE, STATE_UNKNOWN):
             return self._last_mode
         return MODE_CURVE if st.state.lower() in ("on", "true", "1") else MODE_FIXED
+
+    def _thermostat(self) -> State | None:
+        ent = self.cfg.get(CONF_THERMOSTAT)
+        st = self.hass.states.get(ent) if ent else None
+        if st is None or st.state in (STATE_UNAVAILABLE, STATE_UNKNOWN):
+            return None
+        return st
+
+    def thermostat_setpoint(self) -> float | None:
+        """Room temperature the thermostat is aiming for (None when off)."""
+        st = self._thermostat()
+        if st is None or st.state == "off":
+            return None
+        return _f(st.attributes.get("temperature"))
+
+    def room_temp(self) -> float | None:
+        """Indoor average, or the thermostat's own reading when no indoor sensors are set."""
+        v = self.indoor_avg()
+        if v is not None:
+            return v
+        st = self._thermostat()
+        return _f(st.attributes.get("current_temperature")) if st else None
 
     def delta_t(self) -> float | None:
         f, r = self.flow_temp(), self.return_temp()
@@ -432,6 +464,7 @@ class BoilerMonitor:
         self._check_pressure(now)
         if self.season_active:
             self._sample(now, dt)
+            self._check_heatup(now)
             self._account_burn(now)
             self._check_return_hot(now)
         self._prune(now)
@@ -476,6 +509,11 @@ class BoilerMonitor:
             off_s = now - last["end"]
 
         short = off_s is not None and off_s < self.short_cycle_s
+        # For heat-up detection, a burner that has been off since HA started also counts
+        heat_off = off_s
+        if heat_off is None and not partial and last is None:
+            heat_off = now - self.started_at
+        self._maybe_open_heatup(now, heat_off)
         cycle = {
             "start": now,
             "end": None,
@@ -527,8 +565,11 @@ class BoilerMonitor:
                 b["short"] = max(0, b["short"] - 1)
             b["burn_s"] = max(0.0, b["burn_s"] - burn_s)
             self._burn_accounted_until = None
+            if self._heatup and self._heatup["start"] == cycle["start"]:
+                self._heatup = None  # it was a glitch, not a heat-up
             return
         cycle["end"] = now
+        self._close_heatup(now)
         cycle["ret_end"] = _r(self.return_temp())
         cycle["flow_end"] = _r(self.flow_temp())
         cycle["indoor_end"] = _r(self.indoor_avg(), 2)
@@ -683,12 +724,138 @@ class BoilerMonitor:
                 if target is not None:
                     _add(b, "dev_sum", flow - target)
                     _add(b, "dev_n", 1)
+        room = self.room_temp()
+        if room is not None:
+            _add(b, "in_sum", room)
+            _add(b, "in_n", 1)
+        sp = self.thermostat_setpoint()
+        if sp is not None:
+            _add(b, "sp_sum", sp)
+            _add(b, "sp_n", 1)
+            b["sp_min"] = min(b.get("sp_min", sp), sp)
+            b["sp_max"] = max(b.get("sp_max", sp), sp)
         target = self.flow_target()
         if target is not None:
             _add(b, "tgt_sum", target)
             _add(b, "tgt_n", 1)
             if self.regulation_mode == MODE_CURVE:
                 _add(b, "th_n", 1)
+
+    # ------------------------------------------------------------- heat-up
+    def _maybe_open_heatup(self, now: float, off_s: float | None) -> None:
+        """Start measuring how fast the house warms up (after a long pause)."""
+        if self._heatup is not None or off_s is None or off_s < cmf.HEATUP_MIN_OFF_S:
+            return
+        room = self.room_temp()
+        if room is None:
+            return
+        sp = self.thermostat_setpoint()
+        if sp is not None and sp - room < cmf.HEATUP_MIN_GAP:
+            return
+        self._heatup = {"start": now, "in0": round(room, 2), "sp": sp, "out": _r(self.outdoor_temp())}
+
+    def _check_heatup(self, now: float) -> None:
+        ev = self._heatup
+        if ev is None:
+            return
+        room = self.room_temp()
+        if ev["sp"] is not None and room is not None and room >= ev["sp"] - 0.1:
+            self._close_heatup(now)
+        elif now - ev["start"] > cmf.HEATUP_MAX_S:
+            self._close_heatup(now)
+
+    def _close_heatup(self, now: float) -> None:
+        ev, self._heatup = self._heatup, None
+        if ev is None:
+            return
+        room = self.room_temp()
+        if room is None:
+            return
+        rise = room - ev["in0"]
+        dur = now - ev["start"]
+        if rise < cmf.HEATUP_MIN_RISE or dur < cmf.HEATUP_MIN_S:
+            return
+        minutes = dur / 60
+        self.heatups.append(
+            {
+                "ts": int(ev["start"]),
+                "end": int(now),
+                "out": ev["out"],
+                "in0": ev["in0"],
+                "in1": round(room, 2),
+                "sp": ev["sp"],
+                "rise": round(rise, 2),
+                "minutes": round(minutes, 1),
+                "rate": round(minutes / rise, 1),
+            }
+        )
+        cut = now - 60 * 86400
+        self.heatups = [e for e in self.heatups if e["ts"] >= cut][-cmf.HEATUP_KEEP :]
+        self._csv(now, "HEATUP", extra=f"rise={rise:.2f};min={minutes:.0f};rate={minutes / rise:.1f}")
+        self._save()
+
+    def heatup_model(self) -> dict[str, Any] | None:
+        return cmf.heatup_model(self.heatups)
+
+    async def async_estimate_preheat(self, target: float | None, at: datetime | None) -> dict[str, Any]:
+        """When to start heating to reach `target` °C at time `at`."""
+        now = dt_util.now()
+        if target is None:
+            target = self.thermostat_setpoint()
+        room = self.room_temp()
+        model = self.heatup_model()
+        outdoor = self.outdoor_temp()
+        source = "now"
+        if at is not None and self.cfg.get(CONF_WEATHER):
+            fc = await self._forecast_temp(at)
+            if fc is not None:
+                outdoor, source = fc, "forecast"
+        minutes = cmf.preheat_minutes(model, room, target, outdoor)
+        res: dict[str, Any] = {
+            "target": target,
+            "indoor": None if room is None else round(room, 2),
+            "outdoor": outdoor,
+            "outdoor_source": source,
+            "rate_min_per_degree": cmf.heatup_rate(model, outdoor),
+            "minutes": minutes,
+            "events": model["n"] if model else 0,
+        }
+        if at is not None and minutes is not None:
+            start = at - timedelta(minutes=minutes)
+            res["at"] = at.isoformat()
+            res["start_at"] = start.isoformat()
+            res["start_now"] = start <= now
+        return res
+
+    async def _forecast_temp(self, at: datetime) -> float | None:
+        ent = self.cfg.get(CONF_WEATHER)
+        try:
+            resp = await self.hass.services.async_call(
+                "weather", "get_forecasts", {"entity_id": ent, "type": "hourly"},
+                blocking=True, return_response=True,
+            )
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.debug("%s: hourly forecast not available: %s", self.name, err)
+            return None
+        items = (resp or {}).get(ent, {}).get("forecast") or []
+        best, best_d = None, None
+        for it in items:
+            t = dt_util.parse_datetime(str(it.get("datetime", "")))
+            temp = _f(it.get("temperature"))
+            if t is None or temp is None:
+                continue
+            d = abs((t - at).total_seconds())
+            if best_d is None or d < best_d:
+                best, best_d = temp, d
+        return best if best_d is not None and best_d <= 3 * 3600 else None
+
+    # ------------------------------------------------------------- comfort
+    def comfort_points(self) -> list[list[Any]]:
+        now = dt_util.utcnow().timestamp()
+        return cmf.comfort_points(self.hours, now - COMFORT_DAYS * 86400)
+
+    def comfort(self) -> dict[str, Any]:
+        return cmf.comfort_verdict(self.comfort_points())
 
     def _sample_pressure(self, now: float) -> None:
         p = self.pressure()
@@ -725,6 +892,21 @@ class BoilerMonitor:
 
     def _sum_hours(self, start: float, end: float, field: str) -> float:
         return sum(v.get(field, 0) for k, v in self.hours.items() if start <= k < end)
+
+    def _comfort_stats(self, now: float) -> dict[str, Any]:
+        pts = self.comfort_points()
+        recent = [p[1] for p in pts if p[4] >= _hour_key(now) - 23 * 3600]
+        verdict = cmf.comfort_verdict(pts)
+        model = self.heatup_model()
+        out = self.outdoor_temp()
+        return {
+            "comfort_verdict": verdict["verdict"],
+            "comfort_confidence": verdict.get("confidence"),
+            "comfort_gap_24h": round(sum(recent) / len(recent), 2) if recent else None,
+            "heatup_rate": cmf.heatup_rate(model, out),
+            "preheat_minutes": cmf.preheat_minutes(model, self.room_temp(), self.thermostat_setpoint(), out),
+            "thermostat_setpoint": self.thermostat_setpoint(),
+        }
 
     def _avg_hours(self, start: float, end: float, sum_f: str, n_f: str) -> float | None:
         n = self._sum_hours(start, end, n_f)
@@ -843,6 +1025,7 @@ class BoilerMonitor:
             "curve_slope": (cf := self.curve_fit()) and cf.get("slope"),
             "pressure": _r(self.pressure(), 2),
             "pressure_change_7d": self.pressure_change(),
+            **self._comfort_stats(now),
             "burning_sampled_minutes": round(smp / 60),
             "return_max_24h": _r(self._max_hours(h_start, now + 1, "ret_max")),
             "delta_t": _r(self.delta_t()),

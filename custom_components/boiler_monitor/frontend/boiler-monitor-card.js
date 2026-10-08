@@ -10,8 +10,10 @@
  *   show_daily: true
  *   show_correlation: true
  *   show_curve: true      # heating curve / fixed flow chart (needs a flow setpoint sensor)
+ *   show_comfort: true    # comfort vs outdoor + tuning verdict (needs a thermostat)
+ *   show_heatup: true     # how fast the house warms up + pre-heat time
  */
-const CARD_VERSION = "1.1.4";
+const CARD_VERSION = "1.2.0";
 
 const I18N = {
   en: {
@@ -35,6 +37,26 @@ const I18N = {
     tt_target: "Target", tt_actual: "Actual flow", tt_diff: "Actual − target", tt_mode: "Mode",
     z_in: "Zoom in", z_out: "Zoom out", z_reset: "Reset zoom", more: "more",
     z_hint: "Drag to zoom · double-click to zoom in · pinch on touch",
+comfort_title: "Comfort vs outdoor", heat_title: "Warming up the house",
+    v_ok: "Curve looks right", v_slope_low: "Slope too low", v_slope_high: "Slope too high",
+    v_offset_low: "Offset too low", v_offset_high: "Offset too high", v_insufficient_data: "Not enough data yet",
+    a_ok: "The house stays at the set temperature in cold and mild weather alike. Nothing to change.",
+    a_slope_low: "When it's cold outside the house stays below the set temperature even though the burner runs almost non-stop. Raise the curve slope a little (+0.1 to +0.2).",
+    a_slope_high: "When it's cold the house overshoots the set temperature. Lower the curve slope a little (−0.1 to −0.2).",
+    a_offset_low: "The house stays below the set temperature in every weather. Raise the offset (parallel shift) by 1–2 °C.",
+    a_offset_high: "In mild weather the boiler gives more heat than needed (short cycles or overshoot). Lower the offset by 1–2 °C.",
+    af_slope_low: "When it's cold the house can't reach the set temperature. Raise the fixed flow temperature, or switch automatic thermoregulation on.",
+    af_slope_high: "When it's cold the house overshoots. Lower the fixed flow temperature a little.",
+    af_offset_low: "The house stays below the set temperature in every weather. Raise the fixed flow temperature by a few degrees.",
+    af_offset_high: "In mild weather the water is hotter than needed (short cycles or overshoot). Lower the fixed flow temperature, or switch automatic thermoregulation on so it drops when it's mild.",
+    a_insufficient_data: "Needs at least {h} steady hours spread over different outdoor temperatures (now {n} h, {s} °C apart).",
+    conf_low: "low confidence", conf_medium: "medium confidence", conf_high: "high confidence",
+    gap_cold_l: "in cold weather", gap_mild_l: "in mild weather", duty_cold_l: "burner on when cold",
+    vs_set: "vs set", leg_zone: "comfort zone (±0.5 °C)",
+    tt_indoor: "Indoor", tt_setpoint: "Set", tt_gap: "Indoor − set", tt_duty: "Burner on", tt_shorts: "Short cycles",
+    heat_none: "No warm-up measured yet. It is measured each time heating starts after at least 1 h off, with the rooms clearly below the set temperature.",
+    heat_rate_l: "per °C at {o} °C outside", heat_pre_l: "to reach {t} °C now", heat_reached: "already at {t} °C",
+    heat_events: "{n} warm-ups measured", tt_rise: "Rose", tt_took: "Took", tt_rate: "Per °C",
     tt_running: "running", tt_short: "short cycle", tt_from: "Off before", tt_noburn: "not burning this hour",
   },
   ro: {
@@ -58,6 +80,26 @@ const I18N = {
     tt_target: "Tur cerut", tt_actual: "Tur real", tt_diff: "Real − cerut", tt_mode: "Mod",
     z_in: "Mărește", z_out: "Micșorează", z_reset: "Resetează zoom-ul", more: "încă",
     z_hint: "Trage pentru zoom · dublu-clic pentru mărire · ciupire pe ecran tactil",
+comfort_title: "Confort vs exterior", heat_title: "Încălzirea casei",
+    v_ok: "Curba pare bună", v_slope_low: "Panta prea mică", v_slope_high: "Panta prea mare",
+    v_offset_low: "Offset prea mic", v_offset_high: "Offset prea mare", v_insufficient_data: "Încă nu sunt destule date",
+    a_ok: "Casa stă la temperatura setată și pe frig, și pe vreme blândă. Nu e nimic de schimbat.",
+    a_slope_low: "Când e frig afară, casa rămâne sub temperatura setată deși arzătorul merge aproape continuu. Crește puțin panta curbei (+0,1 … +0,2).",
+    a_slope_high: "Când e frig, casa depășește temperatura setată. Scade puțin panta curbei (−0,1 … −0,2).",
+    a_offset_low: "Casa rămâne sub temperatura setată pe orice vreme. Crește offset-ul (deplasarea paralelă) cu 1–2 °C.",
+    a_offset_high: "Pe vreme blândă centrala dă mai multă căldură decât trebuie (cicluri scurte sau depășire). Scade offset-ul cu 1–2 °C.",
+    af_slope_low: "Când e frig, casa nu ajunge la temperatura setată. Crește temperatura de tur fixă sau pornește termoreglarea automată.",
+    af_slope_high: "Când e frig, casa depășește temperatura setată. Scade puțin temperatura de tur fixă.",
+    af_offset_low: "Casa rămâne sub temperatura setată pe orice vreme. Crește temperatura de tur fixă cu câteva grade.",
+    af_offset_high: "Pe vreme blândă apa e mai caldă decât trebuie (cicluri scurte sau depășire). Scade turul fix sau pornește termoreglarea automată, ca să scadă singur când e blând.",
+    a_insufficient_data: "Necesită cel puțin {h} ore stabile, la temperaturi exterioare diferite (acum {n} h, diferență {s} °C).",
+    conf_low: "încredere mică", conf_medium: "încredere medie", conf_high: "încredere mare",
+    gap_cold_l: "pe frig", gap_mild_l: "pe vreme blândă", duty_cold_l: "arzător pornit pe frig",
+    vs_set: "față de setat", leg_zone: "zona de confort (±0,5 °C)",
+    tt_indoor: "Interior", tt_setpoint: "Setat", tt_gap: "Interior − setat", tt_duty: "Arzător pornit", tt_shorts: "Cicluri scurte",
+    heat_none: "Încă nu s-a măsurat nicio încălzire. Se măsoară de fiecare dată când încălzirea pornește după cel puțin 1 h de pauză, cu camerele clar sub temperatura setată.",
+    heat_rate_l: "pe °C la {o} °C afară", heat_pre_l: "până la {t} °C, de acum", heat_reached: "deja la {t} °C",
+    heat_events: "{n} încălziri măsurate", tt_rise: "A crescut", tt_took: "A durat", tt_rate: "Pe °C",
     tt_running: "în curs", tt_short: "ciclu scurt", tt_from: "Pauză înainte", tt_noburn: "nu a ars în ora asta",
   },
 };
@@ -120,6 +162,8 @@ class BoilerMonitorCard extends HTMLElement {
             { name: "show_daily", selector: { boolean: {} } },
             { name: "show_correlation", selector: { boolean: {} } },
             { name: "show_curve", selector: { boolean: {} } },
+            { name: "show_comfort", selector: { boolean: {} } },
+            { name: "show_heatup", selector: { boolean: {} } },
           ],
         },
       ],
@@ -133,7 +177,7 @@ class BoilerMonitorCard extends HTMLElement {
 
   setConfig(config) {
     if (!config) throw new Error("Invalid configuration");
-    this._config = { mode: "full", show_timeline: true, show_daily: true, show_correlation: true, show_curve: true, ...config };
+    this._config = { mode: "full", show_timeline: true, show_daily: true, show_correlation: true, show_curve: true, show_comfort: true, show_heatup: true, ...config };
     if (!this.shadowRoot) this.attachShadow({ mode: "open" });
     this._lastState = undefined;
     if (this._hass) this._render();
@@ -556,6 +600,8 @@ class BoilerMonitorCard extends HTMLElement {
         ${this._config.show_timeline ? `<div class="sec">${esc(t.last24)}</div>${this._timeline(a, false)}` : ""}
         ${this._config.show_daily ? this._daily(a) : ""}
         ${this._config.show_curve && a.sources?.setpoint && a.sources?.outdoor ? this._curve(a) : ""}
+        ${this._config.show_comfort && a.sources?.thermostat && a.sources?.outdoor ? this._comfort(a) : ""}
+        ${this._config.show_heatup && (a.sources?.thermostat || a.room != null) ? this._heatup(a) : ""}
         ${this._config.show_correlation && a.sources?.outdoor ? this._corr(a) : ""}`;
     }
 
@@ -694,6 +740,104 @@ class BoilerMonitorCard extends HTMLElement {
     const legend = `<div class="legend">${fixed ? `<span><i class="lline"></i>${esc(t.fixed_at)}</span>` : `<span><i class="ldot"></i>${esc(t.leg_target)}</span>`}<span><i class="lhdot"></i>${esc(t.leg_actual)}</span></div>`;
     const note = !fixed && !fit ? `<div class="muted small">${esc(t.need_curve)}</div>` : "";
     return `${title}${plot}${legend}${note}<div class="cfoot">${parts.join("")}</div>`;
+  }
+
+  // Comfort vs outdoor: how far the rooms are from the thermostat setting, per hour, vs outdoor temp.
+  _comfort(a) {
+    const t = this._t;
+    const c = a.comfort || { verdict: "insufficient_data", n: 0 };
+    const v = c.verdict || "insufficient_data";
+    const fixed = a.regulation_mode === "fixed";
+    const tone = v === "ok" ? "good" : v === "insufficient_data" ? "none" : /low$/.test(v) ? "cold" : "warm";
+    const icon = { good: "mdi:check-circle", none: "mdi:timer-sand", cold: "mdi:thermometer-chevron-up", warm: "mdi:thermometer-chevron-down" }[tone];
+    let advice = (fixed && t[`af_${v}`]) || t[`a_${v}`] || "";
+    advice = advice.replace("{h}", 24).replace("{n}", c.n ?? 0).replace("{s}", fmt(c.spread ?? 0, 1));
+    const sign = (x) => (x > 0 ? "+" : "") + fmt(x, 1);
+    const facts = v === "insufficient_data" ? "" : `<div class="vfacts">
+        <span><b>${sign(c.gap_cold)} °C</b> ${esc(t.gap_cold_l)}</span>
+        <span><b>${sign(c.gap_mild)} °C</b> ${esc(t.gap_mild_l)}</span>
+        <span><b>${fmt((c.duty_cold ?? 0) * 100, 0)} %</b> ${esc(t.duty_cold_l)}</span>
+        ${c.confidence ? `<span class="muted">${esc(t[`conf_${c.confidence}`] || c.confidence)} · n=${c.n}</span>` : ""}</div>`;
+    const box = `<div class="verdict ${tone}" data-ent="${esc(a.entities?.comfort_verdict || "")}">
+        <ha-icon icon="${icon}"></ha-icon><div><b>${esc(t[`v_${v}`] || v)}</b><div class="vtext">${esc(advice)}</div>${facts}</div></div>`;
+    const head = `<div class="sec">${esc(t.comfort_title)}</div>`;
+    const pts = a.comfort_points || [];
+    if (!pts.length) return `${head}${box}`;
+
+    const xs = pts.map((p) => p[0]), ys = pts.map((p) => p[1]);
+    const xmin = Math.floor(Math.min(...xs) - 1), xmax = Math.ceil(Math.max(...xs) + 1);
+    const ymin = Math.floor(Math.min(-1.5, ...ys) - 0.3), ymax = Math.ceil(Math.max(1.5, ...ys) + 0.3);
+    const n = pts.length;
+    const tip = (p) => tipHtml(esc(`${this._fmtTs(p[4])} – ${this._fmtTs(p[4] + 3600, false)}`), [
+      [t.tt_outdoor, `${fmt(p[0], 1)} °C`],
+      [t.tt_indoor, `${fmt(p[5], 1)} °C`],
+      [t.tt_setpoint, `${fmt(p[6], 1)} °C`],
+      [t.tt_gap, `${sign(p[1])} °C`],
+      [t.tt_duty, `${fmt(p[2] * 100, 0)} %`],
+      p[3] ? [t.tt_shorts, String(p[3])] : null,
+    ]);
+    const points = pts.map((p, i) => ({
+      x: p[0], y: p[1], op: (0.3 + 0.7 * (i + 1) / n).toFixed(2), tip: tip(p),
+      cls: p[1] < -0.5 ? "cdot cold" : p[1] > 0.5 ? "cdot warm" : "cdot ok",
+    }));
+    const layers = (X, Y, d) => {
+      let out = `<rect x="${X(d.x0)}" y="${Y(0.5)}" width="${X(d.x1) - X(d.x0)}" height="${Math.max(0, Y(-0.5) - Y(0.5))}" class="zone"/>`;
+      out += `<line x1="${X(d.x0)}" x2="${X(d.x1)}" y1="${Y(0)}" y2="${Y(0)}" class="zero"/>`;
+      if (c.fit_a != null && c.fit_b != null) {
+        const f = (x) => c.fit_a + c.fit_b * x;
+        out += `<line x1="${X(d.x0)}" y1="${Y(f(d.x0))}" x2="${X(d.x1)}" y2="${Y(f(d.x1))}" class="reg"/>`;
+      }
+      return out;
+    };
+    const plot = this._plot("comfort", {
+      full: { x0: xmin, x1: xmax, y0: ymin, y1: ymax }, H: 150,
+      xFmt: (v2) => `${v2}°`, yFmt: (v2) => `${v2 > 0 ? "+" : ""}${v2}°`, layers, points,
+    });
+    const legend = `<div class="legend"><span><i class="lzone"></i>${esc(t.leg_zone)}</span><span><i class="ldot cold"></i>&lt; −0.5</span><span><i class="ldot warm"></i>&gt; +0.5</span></div>`;
+    return `${head}${box}${plot}${legend}`;
+  }
+
+  // How fast the house warms up: one dot per measured warm-up, minutes per °C vs outdoor.
+  _heatup(a) {
+    const t = this._t;
+    const s = a.stats || {};
+    const head = `<div class="sec">${esc(t.heat_title)}</div>`;
+    const ev = a.heatups || [];
+    const m = a.heatup_model;
+    if (!ev.length || !m) return `${head}<div class="muted small">${esc(t.heat_none)}</div>`;
+    const parts = [];
+    if (s.heatup_rate != null) {
+      parts.push(`<span data-ent="${esc(a.entities?.heatup_rate || "")}"><b>${durText(s.heatup_rate)}</b> ${esc(t.heat_rate_l.replace("{o}", fmt(a.outdoor, 0)))}</span>`);
+    }
+    if (a.thermostat_setpoint != null && s.preheat_minutes != null) {
+      parts.push(s.preheat_minutes > 0
+        ? `<span data-ent="${esc(a.entities?.preheat_time || "")}"><b>${durText(s.preheat_minutes)}</b> ${esc(t.heat_pre_l.replace("{t}", fmt(a.thermostat_setpoint, 1)))}</span>`
+        : `<span class="muted">${esc(t.heat_reached.replace("{t}", fmt(a.thermostat_setpoint, 1)))}</span>`);
+    }
+    parts.push(`<span class="muted">${esc(t.heat_events.replace("{n}", m.n))}${m.r2 != null ? ` · R² ${fmt(m.r2, 2)}` : ""}</span>`);
+    const xs = ev.map((e) => e.out).filter((x) => x != null);
+    if (!xs.length) return `${head}<div class="cfoot">${parts.join("")}</div>`;
+    const xmin = Math.floor(Math.min(...xs) - 2), xmax = Math.ceil(Math.max(...xs) + 2);
+    const ymax = Math.ceil(Math.max(10, ...ev.map((e) => e.rate)) * 1.15 / 5) * 5;
+    const points = ev.filter((e) => e.out != null).map((e, i) => ({
+      x: e.out, y: e.rate, cls: "dot", op: (0.35 + 0.65 * (i + 1) / ev.length).toFixed(2),
+      tip: tipHtml(esc(this._fmtTs(e.ts)), [
+        [t.tt_outdoor, `${fmt(e.out, 1)} °C`],
+        [t.tt_rise, `${fmt(e.in0, 1)} → ${fmt(e.in1, 1)} °C`],
+        [t.tt_took, durText(e.minutes)],
+        [t.tt_rate, durText(e.rate)],
+      ]),
+    }));
+    const layers = (X, Y, d) => {
+      if (m.a == null || m.b == null) return `<line x1="${X(d.x0)}" x2="${X(d.x1)}" y1="${Y(m.median)}" y2="${Y(m.median)}" class="reg"/>`;
+      const f = (x) => m.a + m.b * x;
+      return `<line x1="${X(d.x0)}" y1="${Y(f(d.x0))}" x2="${X(d.x1)}" y2="${Y(f(d.x1))}" class="reg"/>`;
+    };
+    const plot = this._plot("heatup", {
+      full: { x0: xmin, x1: xmax, y0: 0, y1: ymax }, H: 130,
+      xFmt: (v2) => `${v2}°`, yFmt: (v2) => `${v2}m`, layers, points,
+    });
+    return `${head}${plot}<div class="cfoot">${parts.join("")}</div>`;
   }
 
   _corr(a) {
@@ -844,6 +988,21 @@ const STYLE = `
   .mchip.curve { background: color-mix(in srgb, var(--bm-good) 16%, transparent); color: var(--bm-good); }
   .mchip.fixed { background: color-mix(in srgb, var(--primary-color) 14%, transparent); color: var(--primary-color); }
   .warnt b { color: var(--bm-warn); }
+  .verdict { display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; border-radius: 10px;
+             background: var(--secondary-background-color); font-size: 13px; line-height: 1.4; }
+  .verdict ha-icon { flex: none; --mdc-icon-size: 22px; margin-top: 1px; }
+  .verdict b { font-size: 14px; }
+  .verdict .vtext { color: var(--primary-text-color); margin-top: 2px; }
+  .verdict.good ha-icon { color: var(--bm-good); }
+  .verdict.cold ha-icon { color: var(--primary-color); }
+  .verdict.warm ha-icon { color: var(--bm-burn); }
+  .verdict.none ha-icon { color: var(--secondary-text-color); }
+  .vfacts { display: flex; flex-wrap: wrap; gap: 2px 12px; margin-top: 6px; font-size: 12px; }
+  .cdot.ok { fill: var(--bm-good); } .cdot.cold { fill: var(--primary-color); } .cdot.warm { fill: var(--bm-burn); }
+  .zone { fill: color-mix(in srgb, var(--bm-good) 10%, transparent); }
+  .zero { stroke: var(--secondary-text-color); stroke-width: 1; opacity: .6; }
+  .lzone { width: 14px; height: 8px; background: color-mix(in srgb, var(--bm-good) 25%, transparent); display: inline-block; border-radius: 2px; }
+  .ldot.cold { background: var(--primary-color); } .ldot.warm { background: var(--bm-burn); }
   .cfoot { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 13px; }
 `;
 

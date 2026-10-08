@@ -32,6 +32,8 @@ from .const import (
     CONF_SEASON_STATE,
     CONF_SHORT_CYCLE_MIN,
     CONF_THERMOREG,
+    CONF_THERMOSTAT,
+    CONF_WEATHER,
     DEFAULT_BURNER_ON_STATE,
     DEFAULT_CSV_LOG,
     DEFAULT_EFFECT_DELAY_MIN,
@@ -82,6 +84,8 @@ def entities_schema(src: dict[str, Any], with_name: bool) -> vol.Schema:
             _opt(CONF_INDOOR_TEMPS, src): sel.EntitySelector(
                 sel.EntitySelectorConfig(domain="sensor", device_class="temperature", multiple=True)
             ),
+            _opt(CONF_THERMOSTAT, src): sel.EntitySelector(sel.EntitySelectorConfig(domain="climate")),
+            _opt(CONF_WEATHER, src): sel.EntitySelector(sel.EntitySelectorConfig(domain="weather")),
             _opt(CONF_PRESSURE, src): sel.EntitySelector(
                 sel.EntitySelectorConfig(domain="sensor", device_class="pressure")
             ),

@@ -45,3 +45,33 @@
           ({{ states('sensor.centrala_short_cycles_today') }} short),
           {{ states('sensor.centrala_burn_time_today') }} h burning,
           condensing {{ states('sensor.centrala_condensing_ratio_24h') }}%.
+
+# 4. Morning pre-heat: start heating early enough to have 21 °C at 07:00
+#    (needs a thermostat in Boiler Monitor; a weather entity makes it use the forecast)
+- alias: "Heating – morning pre-heat"
+  triggers:
+    - trigger: time_pattern
+      minutes: "/5"
+  conditions:
+    - condition: time
+      after: "03:00:00"
+      before: "07:00:00"
+    - condition: numeric_state
+      entity_id: climate.termostat
+      attribute: temperature
+      below: 21
+  actions:
+    - action: boiler_monitor.estimate_preheat
+      data:
+        target_temperature: 21
+        at: "07:00"
+      response_variable: preheat
+    - if:
+        - condition: template
+          value_template: "{{ preheat.start_now }}"
+      then:
+        - action: climate.set_temperature
+          target:
+            entity_id: climate.termostat
+          data:
+            temperature: 21
