@@ -480,7 +480,8 @@ async def test_weather_compensation_curve(hass: HomeAssistant, freezer):
     temps(hass)
     ariston(hass, thermo="on")
     await burner(hass, False)
-    await setup(hass, ARISTON, {**OPTIONS, "notify_service": ""})
+    # The burner never fires here: the target is sampled while idle too
+    await setup(hass, ARISTON, {**OPTIONS, "notify_service": "", "target_only_burning": False})
     # 12 hours, outdoor from 10 to -1, curve: target = 40 + 1.5 * (10 - out)
     for h in range(12):
         out = 10 - h
@@ -662,3 +663,155 @@ async def test_preheat_uses_weather_forecast(hass: HomeAssistant, freezer):
     assert resp["outdoor_source"] == "forecast" and resp["outdoor"] == 0
     assert resp["minutes"] == pytest.approx(40, abs=1)
     assert resp["start_at"].startswith("2026-11-11T01:20")
+
+
+FULL = {**ARISTON, "thermostat_entity": "climate.termostat"}
+
+
+async def test_comfort_sunny_hours_do_not_blame_the_curve(hass: HomeAssistant, freezer):
+    """Mild hours: boiler off, sun warms the house 1 °C above the setpoint -> not offset_high."""
+    freezer.move_to("2026-11-10 00:00:30+02:00")
+    thermostat(hass)
+    temps(hass)
+    await burner(hass, False)
+    await setup(hass, THERMO, {**OPTIONS, "notify_service": ""})
+    for h in range(60):
+        out = [14, 12, 6, 0][(h // 6) % 4]
+        sunny = out >= 12
+        room = 22.0 if sunny else 21.0
+        temps(hass, out=out, liv=room, dor=room)
+        await hass.async_block_till_done()
+        if sunny:
+            await advance(hass, freezer, 60)
+            continue
+        await burner(hass, True)
+        await advance(hass, freezer, 20)
+        await burner(hass, False)
+        await advance(hass, freezer, 40)
+    v = st(hass, "sensor.centrala_comfort_verdict")
+    assert v.state == "ok", v.attributes
+    assert v.attributes["rule"] == "ok"
+    assert v.attributes["excluded_sunny_hours"] > 0
+    assert v.attributes["duty_mild"] == 0
+
+
+async def test_burner_unavailable_during_burn(hass: HomeAssistant, freezer):
+    """Burner entity drops out mid-burn for 2 h: no phantom burn time, hours left out, no false short cycle."""
+    freezer.move_to("2026-11-10 00:00:30+02:00")
+    notify = async_mock_service(hass, "notify", "mobile_app_telefon")
+    thermostat(hass)
+    temps(hass)
+    ariston(hass, setpoint=50, thermo="on")
+    await burner(hass, False)
+    entry = await setup(hass, FULL)
+    m = entry.runtime_data
+
+    async def normal_hours(n):
+        for _ in range(n):
+            await burner(hass, True)
+            await advance(hass, freezer, 20)
+            await burner(hass, False)
+            await advance(hass, freezer, 40)
+
+    def burn_total():
+        m.stats()  # accounts the burn in progress, if any
+        return sum(v["burn_s"] for v in m.hours.values())
+
+    await normal_hours(3)
+    await burner(hass, True)
+    await advance(hass, freezer, 15)
+    lost = dt_util.utcnow().timestamp()
+    hass.states.async_set(BURNER, "unavailable")
+    await hass.async_block_till_done()
+    assert st(hass, "sensor.centrala_status").state == "unavailable"
+    assert burn_total() == pytest.approx(3 * 20 * 60 + 15 * 60, abs=1)
+
+    await advance(hass, freezer, 120)
+    assert burn_total() == pytest.approx(3 * 20 * 60 + 15 * 60, abs=1)
+    cycle = m.cycles[-1]
+    assert cycle["partial"] is True and cycle["end"] == pytest.approx(lost, abs=1)
+
+    # Back, still (or again) on: not measured against the partial stop
+    back = dt_util.utcnow().timestamp()
+    await burner(hass, True)
+    assert st(hass, "sensor.centrala_status").state == "heating"
+    assert st(hass, "sensor.centrala_short_cycles_today").state == "0"
+    assert m.cycles[-1]["short"] is False and m.cycles[-1]["off_s"] is None
+    assert not [c for c in notify if c.data["data"]["tag"].endswith("short_cycle")]
+    await advance(hass, freezer, 15)
+    await burner(hass, False)
+    await advance(hass, freezer, 30)
+    await normal_hours(2)
+    assert st(hass, "sensor.centrala_short_cycles_today").state == "0"
+
+    attrs = st(hass, "sensor.centrala_status").attributes
+    first, last = int(lost // 3600 * 3600), int(back // 3600 * 3600)
+    gone = set(range(first, last + 1, 3600))
+    assert len(gone) == 3
+    for name in ("curve_points", "comfort_points"):
+        seen = {p[4] for p in attrs[name]}
+        assert seen and not (seen & gone), name
+        assert first - 3600 in seen and last + 3600 in seen, name
+
+
+@pytest.mark.parametrize("idle_target", [0, 25])
+async def test_curve_target_sampled_only_while_burning(hass: HomeAssistant, freezer, idle_target):
+    """The setpoint reports 0 (or its minimum) while the burner is idle -> the slope is still right."""
+    freezer.move_to("2026-11-10 00:00:30+02:00")
+    temps(hass)
+    ariston(hass, setpoint=idle_target, thermo="on")
+    await burner(hass, False)
+    await setup(hass, ARISTON, {**OPTIONS, "notify_service": ""})
+    # 12 hours, outdoor from 10 to -1, curve: target = 40 + 1.5 * (10 - out)
+    for h in range(12):
+        out = 10 - h
+        temps(hass, out=out)
+        ariston(hass, setpoint=40 + 1.5 * (10 - out), thermo="on")
+        await burner(hass, True)
+        await advance(hass, freezer, 30)
+        await burner(hass, False)
+        ariston(hass, setpoint=idle_target, thermo="on")
+        await hass.async_block_till_done()
+        await advance(hass, freezer, 30)
+    attrs = st(hass, "sensor.centrala_status").attributes
+    assert len(attrs["curve_points"]) >= 10
+    fit = attrs["curve_fit"]
+    assert fit["slope"] == pytest.approx(1.5, abs=0.05)
+    assert fit["at_0"] == pytest.approx(55, abs=0.5)
+
+
+async def test_regression_skips_day_with_burner_unavailable(hass: HomeAssistant, freezer):
+    """A day with many hours of unavailable burner is not a complete day for the balance point."""
+    from custom_components.boiler_monitor.const import MAX_NA_S_PER_HOUR
+
+    freezer.move_to("2026-11-10 00:00:30+02:00")
+    temps(hass)
+    await burner(hass, False)
+    entry = await setup(hass)
+    m = entry.runtime_data
+    bad_ts = None
+    # outdoor temp, burn minutes per hour
+    for day, (out, burn_per_h) in enumerate([(0, 30), (5, 20), (10, 10), (2, 26), (8, 14), (4, 22)]):
+        temps(hass, out=out)
+        hours = 24
+        if day == 2:  # the burner entity is gone for the first 8 hours
+            hass.states.async_set(BURNER, "unavailable")
+            await hass.async_block_till_done()
+            await advance(hass, freezer, 4 * 60)
+            bad_ts = dt_util.utcnow()
+            await advance(hass, freezer, 4 * 60)
+            hours = 16
+        for _h in range(hours):
+            await burner(hass, True)
+            await advance(hass, freezer, burn_per_h)
+            await burner(hass, False)
+            await advance(hass, freezer, 60 - burn_per_h)
+    assert sum(1 for v in m.hours.values() if v.get("na_s", 0) > MAX_NA_S_PER_HOUR) == 8
+    bad_date = dt_util.as_local(bad_ts).date().isoformat()
+    bad_day = next(d for d in m.daily(30) if d["date"] == bad_date)
+    assert bad_day["samples"] >= 20 * 60  # sampled all day, so only the missing burner rules it out
+    assert bad_date not in [d["date"] for d in m._complete_days(30)]
+    reg = st(hass, "sensor.centrala_status").attributes["regression"]
+    assert reg is not None and reg["n"] >= 3
+    assert reg["slope"] == pytest.approx(-0.8, abs=0.1)
+    assert float(st(hass, "sensor.centrala_balance_point").state) == pytest.approx(15, abs=1)

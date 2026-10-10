@@ -90,7 +90,8 @@
           "pressure_min": "Minimum pressure (bar)",
           "pressure_max": "Maximum pressure (bar)",
           "notify_service": "Notification service (text) – optional",
-          "csv_log": "Write CSV log (on/off)"
+          "csv_log": "Write CSV log (on/off)",
+          "target_only_burning": "Sample flow target only while burning (on/off)"
         },
         "data_description": {
           "short_cycle_minutes": "In minutes. If the burner starts again sooner than this after it stopped, the start is counted as a short cycle and an alert is raised. Default 10 min.",
@@ -102,7 +103,8 @@
           "pressure_min": "In bar. Below this the \"Pressure problem\" alert is raised (refill the system). Typical cold pressure is 1.0–1.5 bar. Default 1.0 bar.",
           "pressure_max": "In bar. Above this the \"Pressure problem\" alert is raised (expansion vessel / over-filling). The safety valve opens around 3 bar. Default 2.5 bar.",
           "notify_service": "Where to send push alerts, e.g. notify.mobile_app_my_phone (or a notify entity). Leave empty for no push notifications – events and binary sensors work either way. Max one alert per hour per type.",
-          "csv_log": "When on, every START / STOP / SHORT_CYCLE / RETURN_HOT / INEFFECTIVE event is appended to a CSV file in /config/boiler_monitor/ (one file per boiler)."
+          "csv_log": "When on, every START / STOP / SHORT_CYCLE / RETURN_HOT / INEFFECTIVE event is appended to a CSV file in /config/boiler_monitor/ (one file per boiler).",
+          "target_only_burning": "When on, the flow target used for the heating-curve chart and slope is sampled only while the burner is firing. Some boilers report 0, the minimum or a frozen value while idle, which bends the fitted curve. Turn it off if your boiler always reports the real target. Values below 10 °C are ignored either way. Default on."
         }
       }
     }

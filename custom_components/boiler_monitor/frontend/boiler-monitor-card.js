@@ -13,7 +13,7 @@
  *   show_comfort: true    # comfort vs outdoor + tuning verdict (needs a thermostat)
  *   show_heatup: true     # how fast the house warms up + pre-heat time
  */
-const CARD_VERSION = "1.2.0";
+const CARD_VERSION = "1.3.0";
 
 const I18N = {
   en: {
