@@ -120,6 +120,7 @@ Entities that need a sensor you didn't configure are simply not created.
 | Ignore burns shorter than | 20 s | Relay chatter / ignition glitches are discarded entirely |
 | Notification service | – | `notify.mobile_app_your_phone` **or** a notify entity. Leave empty for no push |
 | Write CSV log | on | `/config/boiler_monitor/<name>.csv` |
+| Sample flow target only while burning | on | The flow target for the heating curve is read only while the burner fires. Turn it off if your boiler reports the real target when idle too |
 | Minimum / maximum pressure | 1.0 / 2.5 bar | Outside this range *Pressure problem* triggers (clears with 0.05 bar hysteresis) |
 
 ## Entities
@@ -505,6 +506,9 @@ time;event;burn_min;off_min;outdoor;flow;return;indoor_avg;extra
 - **Storage.** Cycles are kept for 7 days and hourly aggregates for 60 days, in `.storage/boiler_monitor.<entry_id>`. The large attributes (timeline, daily) are excluded from the recorder, so they don't bloat your database.
 
 - **Comfort.** Every minute (in season) the room temperature and the thermostat target are averaged per hour, with the target's min and max. Steady hours (target unchanged, not the hour after a target increase) give one point: outdoor, rooms − target, burner share of the hour, short cycles. The verdict uses the median gap in the coldest and the warmest third of those hours over the last 14 days, the burner share in the cold hours and the short cycles in the mild ones. It needs ≥ 24 steady hours and ≥ 4 °C between the 10th and 90th percentile of outdoor temperature.
+- **Comfort verdict.** The hours are split by outdoor temperature into a cold third and a mild third. The rules are checked in this order, and the first one that matches decides. The rooms are more than 0.5 °C below target (`GAP_COLD`) in both thirds: offset too low. Below target only in the cold third while the burner runs at least 80 % of the hour (`DUTY_FLAT_OUT`): slope too low. At least 0.3 short cycles per hour in the mild third (`SHORT_PER_HOUR`): offset too high. The rooms are more than 0.7 °C above target (`GAP_WARM`) in the mild third: offset too high, but only if the burner ran at least 10 % of those hours (`MIN_DUTY_FOR_OVERSHOOT`). More than 0.7 °C above target in the cold third with the burner on less than half the time: slope too high. After that, a clear trend of the gap with the outdoor temperature can still give slope too low or too high. Otherwise the curve is OK. Hours in which the burner did not run at all and the rooms were above target are left out of the gaps and of the trend: that heat came from the sun or from the people in the house, not from the boiler. The sensor's attributes show the rule that decided (`rule`) and how many such hours were left out (`excluded_sunny_hours`).
+- **Burner unavailable.** If the burner entity becomes `unavailable` or `unknown` during a burn, the cycle is closed at that moment as *partial*, so burn time is counted only up to there. A `UNAVAILABLE` line is written to the CSV log. When the entity comes back, monitoring continues normally and the next start is never compared with that partial stop, so it cannot give a false short cycle. The seconds without a known burner state are counted per hour. Hours with more than 10 minutes of them (`MAX_NA_S_PER_HOUR`) are left out of the comfort points and of the heating curve, and they do not count towards the 20 hours a day needs to be *complete* for the balance point and the burn per degree-day.
+- **Flow target sampling.** With *Sample flow target only while burning* on (the default), the target used for the heating curve is read only while the burner fires. Some boilers report 0, the minimum or a frozen value while idle, and that would bend the fitted line. Hours without any burn then have no point on the curve chart. Targets below 10 °C are always ignored.
 - **Warm-up.** A warm-up starts when the burner comes on after ≥ 1 h off with the rooms ≥ 0.5 °C below target, and ends when the rooms reach target − 0.1 °C, when the burner stops, or after 4 h. Valid if the rooms rose ≥ 0.4 °C in ≥ 5 min. Minutes per °C vs outdoor is fitted with a straight line (needs 3 warm-ups ≥ 3 °C apart, otherwise the median is used). Predictions stay between half the fastest and 1.5× the slowest warm-up seen. Warm-ups are kept for 60 days and written to the CSV log (`HEATUP`).
 
 ## Using it to tune your heating curve
@@ -596,7 +600,7 @@ pip install -r requirements_test.txt
 pytest -q
 ```
 
-The tests run the integration inside a real Home Assistant core with a simulated boiler. They cover cycles, short cycles, relay glitches, restarts (no false short cycles), condensation, the heating effect, season gating, `climate` entities, the outdoor regression, the CSV log and the reset service.
+The tests run the integration inside a real Home Assistant core with a simulated boiler. They cover cycles, short cycles, relay glitches, restarts (no false short cycles), condensation, the heating effect, season gating, `climate` entities, the outdoor regression, the CSV log and the reset service, plus the comfort verdict, an unavailable burner entity and the flow target sampling.
 
 The card is plain JavaScript (no build step) in `custom_components/boiler_monitor/frontend/boiler-monitor-card.js`.
 

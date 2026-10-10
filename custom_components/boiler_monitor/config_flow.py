@@ -31,6 +31,7 @@ from .const import (
     CONF_SEASON_ENTITY,
     CONF_SEASON_STATE,
     CONF_SHORT_CYCLE_MIN,
+    CONF_TARGET_ONLY_BURNING,
     CONF_THERMOREG,
     CONF_THERMOSTAT,
     CONF_WEATHER,
@@ -46,6 +47,7 @@ from .const import (
     DEFAULT_RETURN_THRESHOLD,
     DEFAULT_SEASON_STATE,
     DEFAULT_SHORT_CYCLE_MIN,
+    DEFAULT_TARGET_ONLY_BURNING,
     DOMAIN,
 )
 
@@ -120,6 +122,7 @@ def options_schema(src: dict[str, Any]) -> vol.Schema:
             vol.Required(CONF_PRESSURE_MAX, default=g(CONF_PRESSURE_MAX, DEFAULT_PRESSURE_MAX)): _num(1.5, 3.5, 0.1, "bar"),
             vol.Optional(CONF_NOTIFY_SERVICE, description={"suggested_value": g(CONF_NOTIFY_SERVICE, DEFAULT_NOTIFY_SERVICE)}): sel.TextSelector(),
             vol.Required(CONF_CSV_LOG, default=g(CONF_CSV_LOG, DEFAULT_CSV_LOG)): sel.BooleanSelector(),
+            vol.Required(CONF_TARGET_ONLY_BURNING, default=g(CONF_TARGET_ONLY_BURNING, DEFAULT_TARGET_ONLY_BURNING)): sel.BooleanSelector(),
         }
     )
 

@@ -48,6 +48,7 @@ from .const import (
     CONF_SEASON_ENTITY,
     CONF_SEASON_STATE,
     CONF_SHORT_CYCLE_MIN,
+    CONF_TARGET_ONLY_BURNING,
     CONF_THERMOREG,
     CONF_THERMOSTAT,
     CONF_WEATHER,
@@ -66,6 +67,7 @@ from .const import (
     DEFAULT_RETURN_THRESHOLD,
     DEFAULT_SEASON_STATE,
     DEFAULT_SHORT_CYCLE_MIN,
+    DEFAULT_TARGET_ONLY_BURNING,
     DOMAIN,
     EVENT_CONDENSATION_LOST,
     EVENT_CYCLE_END,
@@ -75,6 +77,8 @@ from .const import (
     MODE_CURVE,
     MODE_FIXED,
     EVENT_SHORT_CYCLE,
+    MAX_NA_S_PER_HOUR,
+    MIN_VALID_FLOW_TARGET,
     SAMPLE_INTERVAL_SECONDS,
     SIGNAL_UPDATE,
     STATUS_HEATING,
@@ -115,6 +119,7 @@ def _hour_key(ts: float) -> int:
 def _new_bucket() -> dict[str, float]:
     return {
         "burn_s": 0.0,  # seconds burner on
+        "na_s": 0.0,  # seconds with the burner entity unavailable/unknown
         "cycles": 0,  # completed cycles (attributed to start hour)
         "short": 0,  # short cycles
         "cond_s": 0.0,  # sampled seconds burning with return <= threshold
@@ -123,7 +128,7 @@ def _new_bucket() -> dict[str, float]:
         "out_n": 0,
         "dt_sum": 0.0,  # flow-return while burning
         "dt_n": 0,
-        "tgt_sum": 0.0,  # flow target (setpoint), sampled all the time in season
+        "tgt_sum": 0.0,  # flow target (setpoint); only while burning unless the option is off
         "tgt_n": 0,
         "th_n": 0,  # of those, samples with thermoregulation ON
         "fl_sum": 0.0,  # actual flow while burning (after settle time)
@@ -137,6 +142,11 @@ def _new_bucket() -> dict[str, float]:
 
 def _add(b: dict[str, float], key: str, val: float) -> None:
     b[key] = b.get(key, 0) + val
+
+
+def _na_hour(b: dict[str, float]) -> bool:
+    """Burner state unknown for too much of this hour to trust its numbers."""
+    return b.get("na_s", 0) > MAX_NA_S_PER_HOUR
 
 
 class BoilerMonitor:
@@ -462,6 +472,8 @@ class BoilerMonitor:
         self._last_tick = now
         self._sample_pressure(now)
         self._check_pressure(now)
+        if not self.burner_available:
+            _add(self._bucket(now), "na_s", dt)
         if self.season_active:
             self._sample(now, dt)
             self._check_heatup(now)
@@ -486,15 +498,21 @@ class BoilerMonitor:
     def _refresh_burner(self, now: float, initial: bool = False) -> None:
         st = self.hass.states.get(self.cfg[CONF_BURNER])
         on = self._is_burner_on(st)
+        was_available = self.burner_available
         self.burner_available = on is not None
         if on is None:
-            return  # ignore unavailable; keep last state
+            # We no longer know what the burner does: stop counting. A burn in
+            # progress ends here as partial, so only the observed part counts.
+            self.burner_on = False
+            self._close_lost_cycle(now)
+            return
         prev = self.burner_on
         self.burner_on = on
         if not self.season_active:
             return
         if on and self._open_cycle() is None:
-            self._start_cycle(now, partial=initial)
+            # Coming back already on: the real start was not observed.
+            self._start_cycle(now, partial=initial or not was_available)
         elif not on and self._open_cycle() is not None and (prev or initial):
             self._stop_cycle(now)
 
@@ -598,6 +616,21 @@ class BoilerMonitor:
                 self._account_burn(now)
                 self._open_cycle()["end"] = now  # type: ignore[index]
                 self._burn_accounted_until = None
+
+    def _close_lost_cycle(self, now: float) -> None:
+        """Burner entity became unavailable mid-burn: close the cycle as partial."""
+        cycle = self._open_cycle()
+        if cycle is None:
+            return
+        self._account_burn(now)
+        cycle["end"] = now
+        # Partial: the real stop was not observed, so it is not used for the
+        # average burn time nor for the off-time of the next cycle.
+        cycle["partial"] = True
+        self._burn_accounted_until = None
+        self._close_heatup(now)
+        self._csv(now, "UNAVAILABLE", burn_min=_r((now - cycle["start"]) / 60))
+        self._save()
 
     def _make_effect_check(self, cycle: dict[str, Any], started: float) -> Callable:
         @callback
@@ -704,7 +737,8 @@ class BoilerMonitor:
         if out is not None:
             _add(b, "out_sum", out)
             _add(b, "out_n", 1)
-        if self.burner_on and self._open_cycle() is not None:
+        burning = self.burner_on and self._open_cycle() is not None
+        if burning:
             ret = self.return_temp()
             if ret is not None:
                 b["smp_s"] = b.get("smp_s", 0.0) + dt
@@ -734,8 +768,15 @@ class BoilerMonitor:
             _add(b, "sp_n", 1)
             b["sp_min"] = min(b.get("sp_min", sp), sp)
             b["sp_max"] = max(b.get("sp_max", sp), sp)
+        # Some boilers report 0 / the minimum / a frozen value while idle,
+        # which would bend the fitted curve.
         target = self.flow_target()
-        if target is not None:
+        only_burning = self._opt(CONF_TARGET_ONLY_BURNING, DEFAULT_TARGET_ONLY_BURNING)
+        if (
+            target is not None
+            and target >= MIN_VALID_FLOW_TARGET
+            and (burning or not only_burning)
+        ):
             _add(b, "tgt_sum", target)
             _add(b, "tgt_n", 1)
             if self.regulation_mode == MODE_CURVE:
@@ -852,7 +893,7 @@ class BoilerMonitor:
     # ------------------------------------------------------------- comfort
     def comfort_points(self) -> list[list[Any]]:
         now = dt_util.utcnow().timestamp()
-        return cmf.comfort_points(self.hours, now - COMFORT_DAYS * 86400)
+        return cmf.comfort_points(self.hours, now - COMFORT_DAYS * 86400, MAX_NA_S_PER_HOUR)
 
     def comfort(self) -> dict[str, Any]:
         return cmf.comfort_verdict(self.comfort_points())
@@ -920,7 +961,7 @@ class BoilerMonitor:
             if k < now - hours * 3600:
                 continue
             v = self.hours[k]
-            if not v.get("tgt_n") or not v.get("out_n"):
+            if not v.get("tgt_n") or not v.get("out_n") or _na_hour(v):
                 continue
             out.append(
                 [
@@ -1047,9 +1088,11 @@ class BoilerMonitor:
         agg: dict[str, dict[str, float]] = {}
         for k, v in self.hours.items():
             d = dt_util.as_local(dt_util.utc_from_timestamp(k)).date().isoformat()
-            a = agg.setdefault(d, _new_bucket())
+            a = agg.setdefault(d, {**_new_bucket(), "ok_n": 0})
             for f in _new_bucket():
                 a[f] += v.get(f, 0)
+            if not _na_hour(v):
+                a["ok_n"] += v.get("out_n", 0)
         out = []
         for d in sorted(agg)[-days:]:
             a = agg[d]
@@ -1063,17 +1106,20 @@ class BoilerMonitor:
                     "cond_pct": _r(100 * a["cond_s"] / a["smp_s"]) if a["smp_s"] >= 300 else None,
                     "delta_t": _r(a["dt_sum"] / a["dt_n"]) if a["dt_n"] else None,
                     "samples": int(a["out_n"]),
+                    # samples from hours in which the burner state was known
+                    "samples_ok": int(a["ok_n"]),
                 }
             )
         return out
 
     def _complete_days(self, days: int) -> list[dict[str, Any]]:
         today = dt_util.now().date().isoformat()
-        # A day counts if it is in the past and has at least ~20h of samples.
+        # A day counts if it is in the past and has at least ~20h of samples,
+        # not counting hours in which the burner entity was mostly unavailable.
         return [
             d
             for d in self.daily(days)
-            if d["date"] != today and d["outdoor"] is not None and d["samples"] >= 20 * 60 * 60 / SAMPLE_INTERVAL_SECONDS
+            if d["date"] != today and d["outdoor"] is not None and d["samples_ok"] >= 20 * 60 * 60 / SAMPLE_INTERVAL_SECONDS
         ]
 
     def regression(self, days: int = 30) -> dict[str, float] | None:

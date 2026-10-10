@@ -26,6 +26,7 @@ the outdoor temperature of the moment. A straight line through the events
 """
 from __future__ import annotations
 
+from math import nan
 from statistics import median
 from typing import Any
 
@@ -36,6 +37,7 @@ GAP_COLD = -0.5  # house this much below setpoint in cold weather = too cold
 GAP_WARM = 0.7  # house this much above setpoint = overshoot
 DUTY_FLAT_OUT = 0.8  # burner on ≥80 % of the hour = running flat out
 SHORT_PER_HOUR = 0.3  # short cycles per hour in mild weather = curve too high
+MIN_DUTY_FOR_OVERSHOOT = 0.1  # mild-weather overshoot only blames the curve if the burner ran this much
 
 VERDICT_OK = "ok"
 VERDICT_SLOPE_LOW = "slope_low"
@@ -91,8 +93,13 @@ def linfit(pts: list[tuple[float, float]]) -> dict[str, float] | None:
     }
 
 
-def comfort_points(hours: dict[int, dict[str, float]], since: float) -> list[list[Any]]:
-    """[outdoor, gap, duty, short_cycles, hour_ts, indoor, setpoint] per steady hour."""
+def comfort_points(
+    hours: dict[int, dict[str, float]], since: float, max_na_s: float | None = None
+) -> list[list[Any]]:
+    """[outdoor, gap, duty, short_cycles, hour_ts, indoor, setpoint] per steady hour.
+
+    Hours with the burner unavailable for more than max_na_s seconds are left out.
+    """
     out: list[list[Any]] = []
     prev: dict[str, float] | None = None
     prev_changed = False
@@ -114,6 +121,8 @@ def comfort_points(hours: dict[int, dict[str, float]], since: float) -> list[lis
         prev = v
         if skip or not (sp_n and in_n and out_n):
             continue
+        if max_na_s is not None and v.get("na_s", 0) > max_na_s:
+            continue  # burner state unknown: the duty of this hour means nothing
         sp = v["sp_sum"] / sp_n
         indoor = v["in_sum"] / in_n
         out.append(
@@ -133,7 +142,16 @@ def comfort_points(hours: dict[int, dict[str, float]], since: float) -> list[lis
 def comfort_verdict(points: list[list[Any]]) -> dict[str, Any]:
     """Turn comfort points into a verdict + the numbers behind it."""
     n = len(points)
-    res: dict[str, Any] = {"verdict": VERDICT_INSUFFICIENT, "confidence": None, "n": n}
+    # House above the setpoint with the burner off all hour: sun or other free
+    # heat, not the curve. These hours say nothing about the gap.
+    used = [p for p in points if not (p[2] == 0 and p[1] > 0)]
+    res: dict[str, Any] = {
+        "verdict": VERDICT_INSUFFICIENT,
+        "confidence": None,
+        "n": n,
+        "rule": None,
+        "excluded_sunny_hours": n - len(used),
+    }
     if n < MIN_HOURS:
         res["reason"] = "hours"
         return res
@@ -147,17 +165,20 @@ def comfort_verdict(points: list[list[Any]]) -> dict[str, Any]:
 
     cold = [p for p in points if p[0] <= p33]
     mild = [p for p in points if p[0] >= p67]
-    gap_cold = median(p[1] for p in cold)
-    gap_mild = median(p[1] for p in mild)
+    # None when every hour of that third was a sunny one (no rule fires on it)
+    gaps_cold = [p[1] for p in used if p[0] <= p33]
+    gaps_mild = [p[1] for p in used if p[0] >= p67]
+    gap_cold = median(gaps_cold) if gaps_cold else None
+    gap_mild = median(gaps_mild) if gaps_mild else None
     duty_cold = sum(p[2] for p in cold) / len(cold)
     duty_mild = sum(p[2] for p in mild) / len(mild)
     short_mild = sum(p[3] for p in mild) / len(mild)
-    fit = linfit([(p[0], p[1]) for p in points])
+    fit = linfit([(p[0], p[1]) for p in used])
     trend = fit["b"] if fit else 0.0  # °C of indoor gap per °C outdoor
 
     res.update(
-        gap_cold=round(gap_cold, 2),
-        gap_mild=round(gap_mild, 2),
+        gap_cold=None if gap_cold is None else round(gap_cold, 2),
+        gap_mild=None if gap_mild is None else round(gap_mild, 2),
         duty_cold=round(duty_cold, 2),
         duty_mild=round(duty_mild, 2),
         short_mild=round(short_mild, 2),
@@ -168,21 +189,29 @@ def comfort_verdict(points: list[list[Any]]) -> dict[str, Any]:
         fit_b=round(fit["b"], 4) if fit else None,
     )
 
-    if gap_cold < GAP_COLD and gap_mild < GAP_COLD:
-        verdict = VERDICT_OFFSET_LOW  # cold in all weather
-    elif gap_cold < GAP_COLD and duty_cold >= DUTY_FLAT_OUT:
-        verdict = VERDICT_SLOPE_LOW  # can't keep up when it's cold, fine when mild
-    elif short_mild >= SHORT_PER_HOUR or gap_mild > GAP_WARM:
-        verdict = VERDICT_OFFSET_HIGH  # too much heat in mild weather
-    elif gap_cold > GAP_WARM and duty_cold < 0.5:
-        verdict = VERDICT_SLOPE_HIGH  # overshoots in cold weather
-    elif trend > 0.08 and gap_cold < -0.3:
-        verdict = VERDICT_SLOPE_LOW
-    elif trend < -0.08 and gap_cold > 0.3:
-        verdict = VERDICT_SLOPE_HIGH
+    # A missing gap is NaN here, so every comparison on it is False.
+    gc = nan if gap_cold is None else gap_cold
+    gm = nan if gap_mild is None else gap_mild
+    if gc < GAP_COLD and gm < GAP_COLD:
+        verdict, rule = VERDICT_OFFSET_LOW, "cold_all_weather"
+    elif gc < GAP_COLD and duty_cold >= DUTY_FLAT_OUT:
+        # can't keep up when it's cold, fine when mild
+        verdict, rule = VERDICT_SLOPE_LOW, "flat_out_cold"
+    elif short_mild >= SHORT_PER_HOUR:
+        verdict, rule = VERDICT_OFFSET_HIGH, "short_cycles_mild"
+    elif gm > GAP_WARM and duty_mild >= MIN_DUTY_FOR_OVERSHOOT:
+        # too much heat in mild weather, and the boiler is the one providing it
+        verdict, rule = VERDICT_OFFSET_HIGH, "overshoot_mild"
+    elif gc > GAP_WARM and duty_cold < 0.5:
+        verdict, rule = VERDICT_SLOPE_HIGH, "overshoot_cold"
+    elif trend > 0.08 and gc < -0.3:
+        verdict, rule = VERDICT_SLOPE_LOW, "trend_low"
+    elif trend < -0.08 and gc > 0.3:
+        verdict, rule = VERDICT_SLOPE_HIGH, "trend_high"
     else:
-        verdict = VERDICT_OK
+        verdict, rule = VERDICT_OK, "ok"
     res["verdict"] = verdict
+    res["rule"] = rule
     res["confidence"] = (
         "high" if n >= 72 and spread >= 8 else "medium" if n >= 48 or spread >= 6 else "low"
     )

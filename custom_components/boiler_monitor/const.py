@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 DOMAIN = "boiler_monitor"
-VERSION = "1.2.0"
+VERSION = "1.3.0"
 
 # Config (entities) — set in config flow
 CONF_NAME = "name"
@@ -31,6 +31,7 @@ CONF_CSV_LOG = "csv_log"
 CONF_MIN_BURN_SECONDS = "min_burn_seconds"
 CONF_PRESSURE_MIN = "pressure_min"
 CONF_PRESSURE_MAX = "pressure_max"
+CONF_TARGET_ONLY_BURNING = "target_only_burning"
 
 DEFAULT_BURNER_ON_STATE = "on"
 DEFAULT_SEASON_STATE = "on"
@@ -44,6 +45,13 @@ DEFAULT_CSV_LOG = True
 DEFAULT_MIN_BURN_SECONDS = 20
 DEFAULT_PRESSURE_MIN = 1.0
 DEFAULT_PRESSURE_MAX = 2.5
+DEFAULT_TARGET_ONLY_BURNING = True
+
+# Hours with the burner entity unavailable for longer than this are left out
+# of the comfort points, the heating curve and the "complete day" check.
+MAX_NA_S_PER_HOUR = 600
+# Flow targets below this are a sensor reporting 0 / garbage, never a setpoint.
+MIN_VALID_FLOW_TARGET = 10.0
 
 # Retention
 CYCLE_RETENTION_HOURS = 7 * 24

@@ -90,7 +90,8 @@
           "pressure_min": "Presiune minimă (bar)",
           "pressure_max": "Presiune maximă (bar)",
           "notify_service": "Serviciu de notificare (text) – opțional",
-          "csv_log": "Scrie jurnal CSV (pornit/oprit)"
+          "csv_log": "Scrie jurnal CSV (pornit/oprit)",
+          "target_only_burning": "Citește ținta de tur doar în timpul arderii (pornit/oprit)"
         },
         "data_description": {
           "short_cycle_minutes": "În minute. Dacă arzătorul repornește mai repede de atât după ce s-a oprit, pornirea e numărată ca short-cycle și se dă alertă. Implicit 10 min.",
@@ -102,7 +103,8 @@
           "pressure_min": "În bar. Sub această valoare apare alerta „Problemă presiune” (trebuie completată apa). Presiunea normală la rece e 1,0–1,5 bar. Implicit 1,0 bar.",
           "pressure_max": "În bar. Peste această valoare apare alerta „Problemă presiune” (vas de expansiune / prea multă apă). Supapa de siguranță deschide pe la 3 bar. Implicit 2,5 bar.",
           "notify_service": "Unde se trimit alertele push, ex. notify.mobile_app_telefon (sau o entitate notify). Gol = fără notificări push – evenimentele și binary sensor-ii funcționează oricum. Maxim o alertă pe oră pentru fiecare tip.",
-          "csv_log": "Când e pornit, fiecare eveniment START / STOP / SHORT_CYCLE / RETURN_HOT / INEFFECTIVE e adăugat într-un fișier CSV în /config/boiler_monitor/ (câte un fișier pentru fiecare centrală)."
+          "csv_log": "Când e pornit, fiecare eveniment START / STOP / SHORT_CYCLE / RETURN_HOT / INEFFECTIVE e adăugat într-un fișier CSV în /config/boiler_monitor/ (câte un fișier pentru fiecare centrală).",
+          "target_only_burning": "Când e pornit, ținta de tur folosită pentru graficul și panta curbei de încălzire se citește doar cât timp arde arzătorul. Unele centrale raportează 0, minimul sau o valoare înghețată în pauze, ceea ce strică panta calculată. Oprește opțiunea dacă centrala ta raportează mereu ținta reală. Valorile sub 10 °C sunt ignorate oricum. Implicit pornit."
         }
       }
     }
