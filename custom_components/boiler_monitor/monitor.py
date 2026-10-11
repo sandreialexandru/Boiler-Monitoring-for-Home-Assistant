@@ -91,6 +91,7 @@ from .const import (
 _LOGGER = logging.getLogger(__name__)
 
 FLOW_SETTLE_S = 300  # ignore the first minutes of a burn for flow-vs-target
+EFFECT_MIN_DUTY = 0.5  # burner share of the check period needed to judge the heating effect
 CURVE_HOURS = 7 * 24
 HDD_BASE = 18.0  # °C, base temperature for heating degree-days
 ALERT_THROTTLE_S = 3600
@@ -479,6 +480,7 @@ class BoilerMonitor:
             self._check_heatup(now)
             self._account_burn(now)
             self._check_return_hot(now)
+        self._clear_stale_ineffective(now)
         self._prune(now)
         self._save()
         self._notify_entities()
@@ -649,6 +651,14 @@ class BoilerMonitor:
             self.last_heating_rate = round(rise / hours, 2)
             cycle["rise"] = self.last_rise
             min_rise = float(self._opt(CONF_MIN_RISE, DEFAULT_MIN_RISE))
+            # Only a burner that kept running says something about the rooms.
+            # A short burn in mild weather, or rooms already at the setpoint,
+            # is the thermostat being satisfied, not heating without effect.
+            duty = self._burn_seconds(started, now) / max(now - started, 1.0)
+            sp = self.thermostat_setpoint()
+            if duty < EFFECT_MIN_DUTY or (sp is not None and cur >= sp):
+                self._notify_entities()
+                return
             was = self.heating_ineffective
             self.heating_ineffective = rise < min_rise
             if self.heating_ineffective and not was:
@@ -666,6 +676,23 @@ class BoilerMonitor:
             self._notify_entities()
 
         return _check
+
+    def _burn_seconds(self, start: float, end: float) -> float:
+        """Burner-on time between two moments, from the recorded cycles."""
+        total = 0.0
+        for c in self.cycles:
+            c_end = c["end"] if c.get("end") is not None else end
+            total += max(0.0, min(c_end, end) - max(c["start"], start))
+        return total
+
+    def _clear_stale_ineffective(self, now: float) -> None:
+        """No burn for a whole check period: there is no heating left to judge."""
+        if not self.heating_ineffective or self._open_cycle() is not None:
+            return
+        last = self._last_closed_cycle()
+        delay = float(self._opt(CONF_EFFECT_DELAY_MIN, DEFAULT_EFFECT_DELAY_MIN)) * 60
+        if last is None or now - last["end"] >= delay:
+            self.heating_ineffective = False
 
     def _check_return_hot(self, now: float) -> None:
         if not self.season_active:

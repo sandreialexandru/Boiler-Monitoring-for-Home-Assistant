@@ -247,6 +247,32 @@ async def test_heating_effect(hass: HomeAssistant, freezer):
     assert 0.6 < rate < 0.8
 
 
+async def test_heating_effect_not_judged_when_boiler_idle(hass: HomeAssistant, freezer):
+    """Mild weather: a short burn, then nothing. Rooms don't rise, but that is not 'ineffective'."""
+    freezer.move_to("2026-11-10 08:00:00+02:00")
+    notify = async_mock_service(hass, "notify", "mobile_app_telefon")
+    temps(hass, out=16, liv=21.0, dor=21.0)
+    await burner(hass, False)
+    await setup(hass)
+    await burner(hass, True)
+    await advance(hass, freezer, 5)
+    await burner(hass, False)
+    await advance(hass, freezer, 50)  # the check fires at 45 min, burner long off
+    assert st(hass, "binary_sensor.centrala_heating_ineffective").state == "off"
+    assert not any("without effect" in c.data["title"] for c in notify)
+
+    # A real problem: burning all the time, no rise -> on
+    await burner(hass, True)
+    await advance(hass, freezer, 46)
+    assert st(hass, "binary_sensor.centrala_heating_ineffective").state == "on"
+    # ...and it does not stay on for days once the boiler stops for good
+    await burner(hass, False)
+    await advance(hass, freezer, 30)
+    assert st(hass, "binary_sensor.centrala_heating_ineffective").state == "on"
+    await advance(hass, freezer, 20)
+    assert st(hass, "binary_sensor.centrala_heating_ineffective").state == "off"
+
+
 async def test_season_gating(hass: HomeAssistant, freezer):
     freezer.move_to("2026-11-10 08:00:00+02:00")
     temps(hass)
