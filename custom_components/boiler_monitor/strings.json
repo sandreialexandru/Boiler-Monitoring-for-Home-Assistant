@@ -3,7 +3,7 @@
     "step": {
       "user": {
         "title": "Boiler Monitor",
-        "description": "Choose the entity that tells when the burner is firing, plus the optional temperature sensors. Every sensor except the burner is optional; features that need a missing sensor are simply not created.",
+        "description": "Required: the burner (or heat-demand) entity, the indoor temperature sensors, and an outdoor temperature source (an outdoor sensor or a weather entity). Everything else is optional: each sensor you add enables the reports that need it, and reports whose sensor is missing are simply not created.",
         "data": {
           "name": "Name",
           "burner_entity": "Burner / heat-demand entity",
@@ -13,10 +13,10 @@
           "return_temp_entity": "Return temperature sensor (°C) – optional",
           "flow_setpoint_entity": "Flow target / setpoint sensor (°C) – optional",
           "thermoregulation_entity": "Automatic thermoregulation entity – optional",
-          "outdoor_temp_entity": "Outdoor temperature sensor (°C) – optional",
-          "indoor_temp_entities": "Indoor temperature sensors (°C) – optional",
+          "outdoor_temp_entity": "Outdoor temperature sensor (°C) – required if no weather entity",
+          "indoor_temp_entities": "Indoor temperature sensors (°C)",
           "thermostat_entity": "Room thermostat (climate) – optional",
-          "weather_entity": "Weather forecast – optional",
+          "weather_entity": "Weather entity – required if no outdoor sensor",
           "pressure_entity": "Heating circuit pressure sensor (bar) – optional",
           "season_entity": "Heating-season entity – optional",
           "season_state": "State meaning \"heating season active\" (text)"
@@ -30,10 +30,10 @@
           "return_temp_entity": "Temperature of the water coming back from the radiators into the boiler, in °C. Needed for the condensing ratio and the \"Condensation lost\" alert.",
           "flow_setpoint_entity": "The flow temperature the boiler is aiming for, in °C – e.g. \"Ariston CH flow setpoint temp\". With automatic thermoregulation ON it follows the weather-compensation curve; with it OFF it is the fixed flow temperature you set. Enables flow-vs-target and the heating-curve chart.",
           "thermoregulation_entity": "The switch that turns the boiler's weather compensation on/off – e.g. \"Ariston automatic thermoregulation\". ON = the flow target follows the outdoor temperature (curve); OFF = fixed flow temperature. The card and charts adapt to the mode.",
-          "outdoor_temp_entity": "Outside air temperature, in °C. Needed for the outdoor correlation, balance point and burn hours per degree-day.",
-          "indoor_temp_entities": "One or more room temperature sensors, in °C. Their average (unavailable sensors are skipped) is used to check whether heating actually warms the house.",
+          "outdoor_temp_entity": "Outside air temperature, in °C. Needed for the outdoor correlation, balance point, burn hours per degree-day, heating curve and comfort verdict. Set this or a weather entity; if both are set, this sensor is used for the outdoor temperature.",
+          "indoor_temp_entities": "One or more room temperature sensors, in °C. Required. Their average (unavailable sensors are skipped) is the room temperature used for the heating-effect check, the warm-up time and the comfort analysis.",
           "thermostat_entity": "The climate entity that decides when to heat, e.g. your Generic Thermostat. Its target temperature is the comfort reference: needed for the comfort-vs-outdoor verdict and the pre-heat time. If no indoor sensors are set, its current temperature is used as the room temperature.",
-          "weather_entity": "A weather entity with an hourly forecast (e.g. Tomorrow.io). Used by the estimate_preheat action to take the forecast outdoor temperature into account. Optional.",
+          "weather_entity": "A weather entity, e.g. Tomorrow.io. If no outdoor sensor is set, its current temperature is used as the outdoor temperature. With an hourly forecast, the estimate_preheat action also uses the forecast temperature.",
           "pressure_entity": "Water pressure of the heating circuit, in bar – e.g. \"Ariston heating circuit pressure\". Enables the low/high pressure alert and the 7-day pressure trend (slow leak detection). Monitored all year.",
           "season_entity": "Optional. While this entity is NOT in the state below, monitoring is paused (no cycles counted, no alerts) – useful in summer when the boiler only makes hot water. Leave empty to monitor all year.",
           "season_state": "The state of the heating-season entity that means \"heating season active\", e.g. \"on\" (input_boolean / switch), \"heat\" (climate) or the exact option text of an input_select. Ignored if no heating-season entity is selected."
@@ -49,10 +49,10 @@
           "return_temp_entity": "Return temperature sensor (°C) – optional",
           "flow_setpoint_entity": "Flow target / setpoint sensor (°C) – optional",
           "thermoregulation_entity": "Automatic thermoregulation entity – optional",
-          "outdoor_temp_entity": "Outdoor temperature sensor (°C) – optional",
-          "indoor_temp_entities": "Indoor temperature sensors (°C) – optional",
+          "outdoor_temp_entity": "Outdoor temperature sensor (°C) – required if no weather entity",
+          "indoor_temp_entities": "Indoor temperature sensors (°C)",
           "thermostat_entity": "Room thermostat (climate) – optional",
-          "weather_entity": "Weather forecast – optional",
+          "weather_entity": "Weather entity – required if no outdoor sensor",
           "pressure_entity": "Heating circuit pressure sensor (bar) – optional",
           "season_entity": "Heating-season entity – optional",
           "season_state": "State meaning \"heating season active\" (text)"
@@ -65,19 +65,24 @@
           "return_temp_entity": "Temperature of the water coming back from the radiators into the boiler, in °C. Needed for the condensing ratio and the \"Condensation lost\" alert.",
           "flow_setpoint_entity": "The flow temperature the boiler is aiming for, in °C – e.g. \"Ariston CH flow setpoint temp\". With automatic thermoregulation ON it follows the weather-compensation curve; with it OFF it is the fixed flow temperature you set. Enables flow-vs-target and the heating-curve chart.",
           "thermoregulation_entity": "The switch that turns the boiler's weather compensation on/off – e.g. \"Ariston automatic thermoregulation\". ON = the flow target follows the outdoor temperature (curve); OFF = fixed flow temperature. The card and charts adapt to the mode.",
-          "outdoor_temp_entity": "Outside air temperature, in °C. Needed for the outdoor correlation, balance point and burn hours per degree-day.",
-          "indoor_temp_entities": "One or more room temperature sensors, in °C. Their average (unavailable sensors are skipped) is used to check whether heating actually warms the house.",
+          "outdoor_temp_entity": "Outside air temperature, in °C. Needed for the outdoor correlation, balance point, burn hours per degree-day, heating curve and comfort verdict. Set this or a weather entity; if both are set, this sensor is used for the outdoor temperature.",
+          "indoor_temp_entities": "One or more room temperature sensors, in °C. Required. Their average (unavailable sensors are skipped) is the room temperature used for the heating-effect check, the warm-up time and the comfort analysis.",
           "thermostat_entity": "The climate entity that decides when to heat, e.g. your Generic Thermostat. Its target temperature is the comfort reference: needed for the comfort-vs-outdoor verdict and the pre-heat time. If no indoor sensors are set, its current temperature is used as the room temperature.",
-          "weather_entity": "A weather entity with an hourly forecast (e.g. Tomorrow.io). Used by the estimate_preheat action to take the forecast outdoor temperature into account. Optional.",
+          "weather_entity": "A weather entity, e.g. Tomorrow.io. If no outdoor sensor is set, its current temperature is used as the outdoor temperature. With an hourly forecast, the estimate_preheat action also uses the forecast temperature.",
           "pressure_entity": "Water pressure of the heating circuit, in bar – e.g. \"Ariston heating circuit pressure\". Enables the low/high pressure alert and the 7-day pressure trend (slow leak detection). Monitored all year.",
           "season_entity": "Optional. While this entity is NOT in the state below, monitoring is paused (no cycles counted, no alerts) – useful in summer when the boiler only makes hot water. Leave empty to monitor all year.",
           "season_state": "The state of the heating-season entity that means \"heating season active\", e.g. \"on\" (input_boolean / switch), \"heat\" (climate) or the exact option text of an input_select. Ignored if no heating-season entity is selected."
-        }
+        },
+        "description": "Required: the burner (or heat-demand) entity, the indoor temperature sensors, and an outdoor temperature source (an outdoor sensor or a weather entity). Everything else is optional: each sensor you add enables the reports that need it, and reports whose sensor is missing are simply not created."
       }
     },
     "abort": {
       "already_configured": "This burner entity is already monitored.",
       "reconfigure_successful": "Reconfigured."
+    },
+    "error": {
+      "indoor_required": "Pick at least one indoor temperature sensor.",
+      "outdoor_required": "Pick an outdoor temperature sensor or a weather entity (at least one of the two)."
     }
   },
   "options": {

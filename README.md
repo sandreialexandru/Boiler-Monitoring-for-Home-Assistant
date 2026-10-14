@@ -8,7 +8,7 @@
 
 A Home Assistant integration that monitors your gas boiler in depth: burner cycles, short-cycling, condensing efficiency (return temperature), flow/return ΔT, the actual effect on room temperature, and how burn time correlates with outdoor temperature. Use it to tune your weather-compensation curve. It ships with its own Lovelace card in **full** and **compact** modes, which loads automatically.
 
-It works with any boiler. All it needs is an entity that tells it when the burner is firing (or when there is heat demand): a relay, a flame sensor, a `climate` entity or a text sensor. Every other sensor is optional.
+It works with any boiler. It needs three things: an entity that tells it when the burner is firing (or when there is heat demand) — a relay, a flame sensor, a `climate` entity or a text sensor —, one or more indoor temperature sensors, and an outdoor temperature (a sensor or a weather entity). Every other sensor is optional and switches on the reports that need it.
 
 <p align="center">
   <img src="docs/images/card-full-light.png" width="420" alt="Full card, light theme">
@@ -92,19 +92,34 @@ The card is registered automatically, so you don't need to add a dashboard resou
 | Name | ✅ | Used for entity IDs (`sensor.<name>_status`…) |
 | Burner / heat-demand entity | ✅ | `switch`, `binary_sensor`, `input_boolean`, `climate` or `sensor` |
 | State meaning "burner on" | ✅ | `on` for switches and binary sensors. For a **climate** entity, the `hvac_action` value (`heating`). For a text sensor, the exact state string |
+| Indoor temperature sensors | ✅ | One or more; their average is the room temperature |
+| Outdoor temperature sensor | ✅ *or weather* | Outside air temperature. If both this and a weather entity are set, this sensor wins |
+| Weather entity | ✅ *or outdoor sensor* | Without an outdoor sensor, its current temperature is the outdoor temperature. With an hourly forecast (e.g. Tomorrow.io), `estimate_preheat` also uses the forecast |
 | Flame sensor | – | A `binary_sensor` that is on while the flame burns (e.g. Ariston *is flame on*). With it, the burner entity above becomes **heat demand** and only demand **and** flame counts as a burn. See [Relay + flame sensor](#relay--flame-sensor) |
 | Flow temperature sensor | – | Enables ΔT |
 | Return temperature sensor | – | Enables condensing ratio and the condensation-lost alert |
-| Outdoor temperature sensor | – | Enables balance point and burn per degree-day |
-| Indoor temperature sensors | – | One or more; their average is used for the heating-effect check |
 | Flow target / setpoint sensor | – | The flow temperature the boiler aims for (e.g. Ariston *CH flow setpoint temp*). Enables flow-vs-target and the heating-curve chart |
 | Automatic thermoregulation entity | – | Switch that turns weather compensation on/off (e.g. Ariston *automatic thermoregulation*). ON = curve, OFF = fixed flow. The card adapts to it |
+| Room thermostat (climate) | – | The climate entity that decides when to heat (e.g. a Generic Thermostat). Its target temperature is the comfort reference. Enables the comfort verdict and the pre-heat time |
 | Heating circuit pressure sensor | – | In bar (e.g. Ariston *heating circuit pressure*). Enables the pressure alert and the 7-day trend |
-| Room thermostat (climate) | – | The climate entity that decides when to heat (e.g. a Generic Thermostat). Its target temperature is the comfort reference. Enables the comfort verdict and the pre-heat time. Without indoor sensors, its current temperature is used as the room temperature |
-| Weather forecast | – | A weather entity with an hourly forecast (e.g. Tomorrow.io). Lets `estimate_preheat` use the forecast outdoor temperature |
 | Heating-season entity / state | – | e.g. `input_boolean.heating_season` = `on`, `climate.x` = `heat`, or an `input_select` option. Leave it empty to monitor all year |
 
-Entities that need a sensor you didn't configure are simply not created.
+The form refuses to save without the required fields. Entries created with an older version keep working; ⋮ → **Reconfigure** asks for the missing ones the next time you open it.
+
+#### What each optional sensor enables
+
+Leave a sensor empty and the reports that depend on it are not created at all — no empty entities, no blank card sections.
+
+| Optional sensor | Entities | On the card |
+|---|---|---|
+| Flame sensor | heat demand time today, flame share of demand, ignitions per demand hour, status `demand` | demand band on the timeline, three tiles |
+| Flow temperature | ΔT *(with return)*, flow vs target *(with setpoint)* | Flow, ΔT; missed-ignition detection *(with flame)* |
+| Return temperature | condensing ratio, ΔT *(with flow)*, *Condensation lost* | Return, Condensing tile |
+| Flow target / setpoint | flow vs target *(with flow)*, heating curve slope | Target, heating curve / fixed flow chart |
+| Automatic thermoregulation | regulation mode | curve vs fixed mode on the chart |
+| Room thermostat | comfort verdict, comfort gap, pre-heat time | Comfort vs outdoor |
+| Pressure | pressure change 7 d, *Pressure problem* | Pressure |
+
 
 > **Which burner entity should I pick?**
 > If the boiler is switched by a relay from a thermostat (e.g. Generic Thermostat + ESPHome relay), the relay shows *heat demand*, not the flame. On its own it cannot see the boiler stopping the flame while the relay still asks for heat. If your boiler integration exposes the flame state, set it as the **Flame sensor** as well (next section).

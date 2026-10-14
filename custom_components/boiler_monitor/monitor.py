@@ -345,8 +345,26 @@ class BoilerMonitor:
     def return_temp(self) -> float | None:
         return self._state_val(self.cfg.get(CONF_RETURN_TEMP))
 
+    @property
+    def has_outdoor(self) -> bool:
+        return bool(self.cfg.get(CONF_OUTDOOR_TEMP) or self.cfg.get(CONF_WEATHER))
+
+    @property
+    def outdoor_source(self) -> str | None:
+        """Entity the outdoor temperature comes from: the sensor, else the weather entity."""
+        return self.cfg.get(CONF_OUTDOOR_TEMP) or self.cfg.get(CONF_WEATHER) or None
+
     def outdoor_temp(self) -> float | None:
-        return self._state_val(self.cfg.get(CONF_OUTDOOR_TEMP))
+        if self.cfg.get(CONF_OUTDOOR_TEMP):
+            return self._state_val(self.cfg[CONF_OUTDOOR_TEMP])
+        ent = self.cfg.get(CONF_WEATHER)
+        st = self.hass.states.get(ent) if ent else None
+        if st is None or st.state in BAD_STATES:
+            return None
+        val = _f(st.attributes.get("temperature"))
+        if val is not None and str(st.attributes.get("temperature_unit", "°C")).endswith("F"):
+            val = (val - 32) * 5 / 9
+        return val
 
     def indoor_avg(self) -> float | None:
         vals = [

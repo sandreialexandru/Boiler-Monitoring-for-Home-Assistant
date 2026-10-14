@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 DOMAIN = "boiler_monitor"
-VERSION = "1.5.0"
+VERSION = "1.6.0"
 
 # Config (entities) — set in config flow
 CONF_NAME = "name"
@@ -20,6 +20,8 @@ CONF_PRESSURE = "pressure_entity"
 CONF_THERMOSTAT = "thermostat_entity"
 CONF_WEATHER = "weather_entity"
 CONF_FLAME = "flame_entity"
+# pseudo-key: an outdoor sensor OR a weather entity
+HAS_OUTDOOR = "_outdoor"
 
 # Options (tuning) — editable later
 CONF_SHORT_CYCLE_MIN = "short_cycle_minutes"

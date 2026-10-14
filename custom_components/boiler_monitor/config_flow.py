@@ -68,6 +68,7 @@ def entities_schema(src: dict[str, Any], with_name: bool) -> vol.Schema:
         fields[vol.Required(CONF_NAME, default=src.get(CONF_NAME, "Centrala"))] = str
     fields.update(
         {
+            # --- required: without these the integration has nothing to work with
             vol.Required(CONF_BURNER, default=src.get(CONF_BURNER, vol.UNDEFINED)): sel.EntitySelector(
                 sel.EntitySelectorConfig(
                     domain=["binary_sensor", "switch", "input_boolean", "climate", "sensor"]
@@ -77,6 +78,15 @@ def entities_schema(src: dict[str, Any], with_name: bool) -> vol.Schema:
                 CONF_BURNER_ON_STATE,
                 default=src.get(CONF_BURNER_ON_STATE, DEFAULT_BURNER_ON_STATE),
             ): sel.TextSelector(),
+            vol.Required(
+                CONF_INDOOR_TEMPS, default=src.get(CONF_INDOOR_TEMPS) or vol.UNDEFINED
+            ): sel.EntitySelector(
+                sel.EntitySelectorConfig(domain="sensor", device_class="temperature", multiple=True)
+            ),
+            # one of these two is required (checked in validate())
+            _opt(CONF_OUTDOOR_TEMP, src): TEMP_SENSOR,
+            _opt(CONF_WEATHER, src): sel.EntitySelector(sel.EntitySelectorConfig(domain="weather")),
+            # --- optional: each one enables the reports that need it
             _opt(CONF_FLAME, src): sel.EntitySelector(
                 sel.EntitySelectorConfig(domain=["binary_sensor", "switch", "input_boolean"])
             ),
@@ -86,12 +96,7 @@ def entities_schema(src: dict[str, Any], with_name: bool) -> vol.Schema:
             _opt(CONF_THERMOREG, src): sel.EntitySelector(
                 sel.EntitySelectorConfig(domain=["switch", "binary_sensor", "input_boolean"])
             ),
-            _opt(CONF_OUTDOOR_TEMP, src): TEMP_SENSOR,
-            _opt(CONF_INDOOR_TEMPS, src): sel.EntitySelector(
-                sel.EntitySelectorConfig(domain="sensor", device_class="temperature", multiple=True)
-            ),
             _opt(CONF_THERMOSTAT, src): sel.EntitySelector(sel.EntitySelectorConfig(domain="climate")),
-            _opt(CONF_WEATHER, src): sel.EntitySelector(sel.EntitySelectorConfig(domain="weather")),
             _opt(CONF_PRESSURE, src): sel.EntitySelector(
                 sel.EntitySelectorConfig(domain="sensor", device_class="pressure")
             ),
@@ -102,6 +107,16 @@ def entities_schema(src: dict[str, Any], with_name: bool) -> vol.Schema:
         }
     )
     return vol.Schema(fields)
+
+
+def validate(user_input: dict[str, Any]) -> dict[str, str]:
+    """Errors for the entities form (field -> error key)."""
+    errors: dict[str, str] = {}
+    if not user_input.get(CONF_INDOOR_TEMPS):
+        errors[CONF_INDOOR_TEMPS] = "indoor_required"
+    if not user_input.get(CONF_OUTDOOR_TEMP) and not user_input.get(CONF_WEATHER):
+        errors["base"] = "outdoor_required"
+    return errors
 
 
 def _num(lo: float, hi: float, step: float, unit: str) -> sel.NumberSelector:
@@ -135,19 +150,29 @@ class BoilerMonitorConfigFlow(ConfigFlow, domain=DOMAIN):
     VERSION = 1
 
     async def async_step_user(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        errors: dict[str, str] = {}
         if user_input is not None:
-            await self.async_set_unique_id(user_input[CONF_BURNER])
-            self._abort_if_unique_id_configured()
-            return self.async_create_entry(title=user_input[CONF_NAME], data=user_input)
-        return self.async_show_form(step_id="user", data_schema=entities_schema({}, True))
+            errors = validate(user_input)
+            if not errors:
+                await self.async_set_unique_id(user_input[CONF_BURNER])
+                self._abort_if_unique_id_configured()
+                return self.async_create_entry(title=user_input[CONF_NAME], data=user_input)
+        return self.async_show_form(
+            step_id="user", data_schema=entities_schema(user_input or {}, True), errors=errors
+        )
 
     async def async_step_reconfigure(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         entry = self._get_reconfigure_entry()
+        errors: dict[str, str] = {}
         if user_input is not None:
-            data = {CONF_NAME: entry.data.get(CONF_NAME, entry.title), **user_input}
-            return self.async_update_reload_and_abort(entry, data=data)
+            errors = validate(user_input)
+            if not errors:
+                data = {CONF_NAME: entry.data.get(CONF_NAME, entry.title), **user_input}
+                return self.async_update_reload_and_abort(entry, data=data)
         return self.async_show_form(
-            step_id="reconfigure", data_schema=entities_schema(dict(entry.data), False)
+            step_id="reconfigure",
+            data_schema=entities_schema(user_input or dict(entry.data), False),
+            errors=errors,
         )
 
     @staticmethod

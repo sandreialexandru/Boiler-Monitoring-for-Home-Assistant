@@ -4,7 +4,7 @@ from datetime import timedelta
 import pytest
 from homeassistant import config_entries
 from homeassistant.core import HomeAssistant
-from homeassistant.data_entry_flow import FlowResultType
+from homeassistant.data_entry_flow import FlowResultType, InvalidData
 from homeassistant.util import dt as dt_util
 from pytest_homeassistant_custom_component.common import (
     MockConfigEntry,
@@ -73,13 +73,35 @@ async def test_config_flow(hass: HomeAssistant):
     hass.states.async_set(BURNER, "off")
     res = await hass.config_entries.flow.async_init(DOMAIN, context={"source": config_entries.SOURCE_USER})
     assert res["type"] is FlowResultType.FORM
+    base = {"name": "Centrala", "burner_entity": BURNER, "burner_on_state": "on"}
+    # Indoor sensors and an outdoor source (sensor or weather) are required
+    with pytest.raises(InvalidData):  # indoor sensors are a required field
+        await hass.config_entries.flow.async_configure(res["flow_id"], base)
+    res = await hass.config_entries.flow.async_configure(res["flow_id"], {**base, "indoor_temp_entities": []})
+    assert res["errors"] == {"indoor_temp_entities": "indoor_required", "base": "outdoor_required"}
     res = await hass.config_entries.flow.async_configure(
-        res["flow_id"], {"name": "Centrala", "burner_entity": BURNER, "burner_on_state": "on"}
+        res["flow_id"], {**base, "indoor_temp_entities": ["sensor.living"]}
+    )
+    assert res["errors"] == {"base": "outdoor_required"}
+    hass.states.async_set("weather.acasa", "sunny", {"temperature": 7.5, "temperature_unit": "°C"})
+    hass.states.async_set("sensor.living", 21.0, {"device_class": "temperature"})
+    res = await hass.config_entries.flow.async_configure(
+        res["flow_id"], {**base, "indoor_temp_entities": ["sensor.living"], "weather_entity": "weather.acasa"}
     )
     assert res["type"] is FlowResultType.CREATE_ENTRY
     await hass.async_block_till_done()
-    # Minimal config: only burner. Optional-sensor entities must not exist.
+    # Minimal config: burner + indoor + weather. Entities needing other sensors must not exist.
     assert st(hass, "sensor.centrala_status").state == "idle"
+    attrs = st(hass, "sensor.centrala_status").attributes
+    assert attrs["outdoor"] == 7.5  # taken from the weather entity
+    assert attrs["sources"]["outdoor"] == "weather.acasa"
+    assert st(hass, "sensor.centrala_balance_point") is not None
+    assert st(hass, "sensor.centrala_heating_rate") is not None
+    for missing in ("flow_return_dt", "condensing_ratio_24h", "flow_vs_target_24h", "regulation_mode",
+                    "pressure_change_7d", "comfort_verdict", "pre_heat_time", "heat_demand_time_today",
+                    "flame_share_of_demand_24_h", "heating_curve_slope"):
+        assert st(hass, f"sensor.centrala_{missing}") is None, missing
+    assert st(hass, "binary_sensor.centrala_pressure_problem") is None
     assert st(hass, "sensor.centrala_cycles_today") is not None
     assert st(hass, "sensor.centrala_flow_return_dt") is None
     assert st(hass, "binary_sensor.centrala_condensation_lost") is None

@@ -20,13 +20,13 @@ from .const import (
     CONF_FLOW_SETPOINT,
     CONF_FLOW_TEMP,
     CONF_INDOOR_TEMPS,
-    CONF_OUTDOOR_TEMP,
     CONF_PRESSURE,
     CONF_RETURN_TEMP,
     CONF_THERMOREG,
     CONF_THERMOSTAT,
     CONF_WEATHER,
     DOMAIN,
+    HAS_OUTDOOR,
     MODE_CURVE,
     MODE_FIXED,
     STATUS_DEMAND,
@@ -90,13 +90,13 @@ REQUIRES: dict[str, tuple[str, ...]] = {
     "starts_per_demand_hour": (CONF_FLAME,),
     "delta_t": (CONF_FLOW_TEMP, CONF_RETURN_TEMP),
     "heating_rate": (CONF_INDOOR_TEMPS,),
-    "balance_point": (CONF_OUTDOOR_TEMP,),
-    "burn_per_hdd": (CONF_OUTDOOR_TEMP,),
+    "balance_point": (HAS_OUTDOOR,),
+    "burn_per_hdd": (HAS_OUTDOOR,),
     "regulation_mode": (CONF_THERMOREG,),
     "flow_deviation": (CONF_FLOW_TEMP, CONF_FLOW_SETPOINT),
-    "curve_slope": (CONF_FLOW_SETPOINT, CONF_OUTDOOR_TEMP),
+    "curve_slope": (CONF_FLOW_SETPOINT, HAS_OUTDOOR),
     "pressure_change_7d": (CONF_PRESSURE,),
-    "comfort_verdict": (CONF_THERMOSTAT, CONF_OUTDOOR_TEMP),
+    "comfort_verdict": (CONF_THERMOSTAT, HAS_OUTDOOR),
     "comfort_gap": (CONF_THERMOSTAT,),
     "preheat_time": (CONF_THERMOSTAT,),
 }
@@ -110,9 +110,12 @@ async def async_setup_entry(hass: HomeAssistant, entry, async_add_entities: AddE
     monitor: BoilerMonitor = entry.runtime_data
     cfg = monitor.cfg
     ents: list[SensorEntity] = [BoilerStatusSensor(monitor, STATUS_DESC)]
+    def has(key: str) -> bool:
+        return monitor.has_outdoor if key == HAS_OUTDOOR else bool(cfg.get(key))
+
     for d in SENSORS:
-        if all(cfg.get(k) for k in REQUIRES.get(d.key, ())) and (
-            d.key not in REQUIRES_ANY or any(cfg.get(k) for k in REQUIRES_ANY[d.key])
+        if all(has(k) for k in REQUIRES.get(d.key, ())) and (
+            d.key not in REQUIRES_ANY or any(has(k) for k in REQUIRES_ANY[d.key])
         ):
             ents.append(BoilerStatSensor(monitor, d))
     async_add_entities(ents)
@@ -190,7 +193,7 @@ class BoilerStatusSensor(BoilerEntity, SensorEntity):
                 "flame": cfg.get(CONF_FLAME),
                 "flow": cfg.get(CONF_FLOW_TEMP),
                 "return": cfg.get(CONF_RETURN_TEMP),
-                "outdoor": cfg.get(CONF_OUTDOOR_TEMP),
+                "outdoor": m.outdoor_source,
                 "setpoint": cfg.get(CONF_FLOW_SETPOINT),
                 "thermoregulation": cfg.get(CONF_THERMOREG),
                 "pressure": cfg.get(CONF_PRESSURE),
