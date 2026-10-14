@@ -13,11 +13,13 @@
  *   show_comfort: true    # comfort vs outdoor + tuning verdict (needs a thermostat)
  *   show_heatup: true     # how fast the house warms up + pre-heat time
  */
-const CARD_VERSION = "1.4.0";
+const CARD_VERSION = "1.5.0";
 
 const I18N = {
   en: {
-    heating: "Heating", idle: "Idle", off_season: "Off season", unavailable: "Unavailable",
+    heating: "Heating", idle: "Idle", off_season: "Off season", unavailable: "Unavailable", demand: "Demand, flame off",
+    demand_today: "Demand today", flame_share: "Flame / demand", starts_dh: "Ignitions / demand h",
+    tt_demand: "Heat demand", tt_inferred: "seen from the flow jump (flame sensor missed it)", tt_flame: "Flame",
     burning_for: "burning for", min: "min", h: "h",
     flow: "Flow", ret: "Return", dt: "ΔT", outdoor: "Outdoor", indoor: "Indoor",
     cycles_today: "Cycles today", cycles_h: "Cycles / h", avg_burn: "Avg burn", avg_off: "Avg off",
@@ -60,7 +62,9 @@ comfort_title: "Comfort vs outdoor", heat_title: "Warming up the house",
     tt_running: "running", tt_short: "short cycle", tt_from: "Off before", tt_noburn: "not burning this hour",
   },
   ro: {
-    heating: "Încălzește", idle: "În așteptare", off_season: "În afara sezonului", unavailable: "Indisponibil",
+    heating: "Încălzește", idle: "În așteptare", off_season: "În afara sezonului", unavailable: "Indisponibil", demand: "Cerere, flacără stinsă",
+    demand_today: "Cerere azi", flame_share: "Flacără / cerere", starts_dh: "Aprinderi / h cerere",
+    tt_demand: "Cerere de căldură", tt_inferred: "văzută din saltul turului (senzorul de flacără a ratat-o)", tt_flame: "Flacără",
     burning_for: "arde de", min: "min", h: "h",
     flow: "Tur", ret: "Retur", dt: "ΔT", outdoor: "Exterior", indoor: "Interior",
     cycles_today: "Cicluri azi", cycles_h: "Cicluri / h", avg_burn: "Ardere medie", avg_off: "Pauză medie",
@@ -226,6 +230,7 @@ class BoilerMonitorCard extends HTMLElement {
     const t = this._t;
     return tipHtml(esc(this._fmtDay(d.date)), [
       [t.tt_burn, durText(d.burn_h * 60)],
+      [t.tt_demand, d.demand_h != null && this._hasFlame ? durText(d.demand_h * 60) : null],
       [t.tt_cycles, d.cycles != null ? `${d.cycles}${d.short ? ` (${d.short} ${t.short})` : ""}` : null],
       [t.tt_outdoor, d.outdoor != null ? `${fmt(d.outdoor, 1)} °C` : null],
       [t.tt_cond, d.cond_pct != null ? `${fmt(d.cond_pct, 0)} %` : null],
@@ -523,6 +528,7 @@ class BoilerMonitorCard extends HTMLElement {
     }
     const a = st.attributes;
     const s = a.stats || {};
+    this._hasFlame = !!a.sources?.flame;
     const status = st.state;
     const title = this._config.title || (a.friendly_name || "").replace(/\s*(Status|Stare)$/i, "");
     const compact = this._config.mode === "compact";
@@ -541,7 +547,7 @@ class BoilerMonitorCard extends HTMLElement {
     const header = `
       <div class="hdr">
         <div class="flame ${status}" data-ent="${esc(a.entities?.burner || this._config.entity)}">
-          <ha-icon icon="${status === "heating" ? "mdi:fire" : status === "off_season" ? "mdi:snowflake-off" : "mdi:fire-off"}"></ha-icon>
+          <ha-icon icon="${status === "heating" ? "mdi:fire" : status === "off_season" ? "mdi:snowflake-off" : status === "demand" ? "mdi:thermostat" : "mdi:fire-off"}"></ha-icon>
         </div>
         <div class="ttl">
           <div class="name">${esc(title)}</div>
@@ -586,6 +592,9 @@ class BoilerMonitorCard extends HTMLElement {
         ["avg_off", t.avg_off, ...durTile(s.avg_off_min), ""],
         ["duty_cycle", t.duty, fmt(s.duty_cycle, 0), "%", ""],
         ["burn_time_today", t.burn_today, ...durTile(s.burn_hours_today == null ? null : s.burn_hours_today * 60), ""],
+        a.sources?.flame && ["demand_time_today", t.demand_today, ...durTile(s.demand_hours_today == null ? null : s.demand_hours_today * 60), ""],
+        a.sources?.flame && ["flame_share", t.flame_share, fmt(s.flame_share, 0), "%", ""],
+        a.sources?.flame && ["starts_per_demand_hour", t.starts_dh, fmt(s.starts_per_demand_hour, 1), "", (s.starts_per_demand_hour ?? 0) > 4 ? "warn" : ""],
         a.sources?.return && ["condensing_ratio", t.cond, fmt(s.condensing_ratio, 0), "%", this._condCls(s.condensing_ratio)],
         a.entities?.heating_rate && ["heating_rate", t.rate, fmt(s.heating_rate, 2), "°C/h", (s.heating_rate ?? 1) <= 0 ? "warn" : ""],
       ].filter(Boolean);
@@ -632,15 +641,28 @@ class BoilerMonitorCard extends HTMLElement {
     const t0 = now - span;
     const W = 1000;
     const H = small ? 14 : 26;
-    const segs = (a.timeline || []).map(([s, e, sh]) => {
+    const tt0 = this._t;
+    // Heat demand (relay) as a pale band behind the flames
+    const dems = (a.demand_timeline || []).map(([s, e]) => {
+      const x1 = Math.max(0, ((s - t0) / span) * W);
+      const x2 = Math.min(W, (((e ?? now) - t0) / span) * W);
+      if (x2 <= 0) return "";
+      const tip = small ? "" : esc(tipHtml(
+        `${this._fmtTs(s, false)} – ${e == null ? tt0.tt_running : this._fmtTs(e, false)}`,
+        [[tt0.tt_demand, durText(((e ?? now) - s) / 60)],
+         [tt0.tt_flame, durText(this._flameIn(a, s, e ?? now) / 60)]]));
+      return `<rect x="${x1.toFixed(1)}" y="0" width="${Math.max(1.5, x2 - x1).toFixed(1)}" height="${H}" rx="1.5" class="dem"${tip ? ` data-tip="${tip}"` : ""}/>`;
+    }).join("");
+    const segs = (a.timeline || []).map(([s, e, sh, inf]) => {
       const x1 = Math.max(0, ((s - t0) / span) * W);
       const x2 = Math.min(W, (((e ?? now) - t0) / span) * W);
       if (x2 <= 0) return "";
       const tt = this._t;
       const tip = small ? "" : esc(tipHtml(
         `${this._fmtTs(s, false)} – ${e == null ? tt.tt_running : this._fmtTs(e, false)}`,
-        [[tt.tt_burn, durText(((e ?? now) - s) / 60)], sh ? ["⚠️", tt.tt_short] : null]));
-      return `<rect x="${x1.toFixed(1)}" y="0" width="${Math.max(1.5, x2 - x1).toFixed(1)}" height="${H}" rx="1.5" class="${sh ? "seg short" : "seg"}${e == null ? " live" : ""}"${tip ? ` data-tip="${tip}"` : ""}/>`;
+        [[tt.tt_burn, durText(((e ?? now) - s) / 60)], sh ? ["⚠️", tt.tt_short] : null, inf ? ["ℹ️", tt.tt_inferred] : null]));
+      const dy = dems ? H * 0.2 : 0;
+      return `<rect x="${x1.toFixed(1)}" y="${dy}" width="${Math.max(1.5, x2 - x1).toFixed(1)}" height="${H - 2 * dy}" rx="1.5" class="${sh ? "seg short" : "seg"}${inf ? " inf" : ""}${e == null ? " live" : ""}"${tip ? ` data-tip="${tip}"` : ""}/>`;
     }).join("");
     let ticks = "", labels = "";
     if (!small) {
@@ -657,8 +679,13 @@ class BoilerMonitorCard extends HTMLElement {
       }
     }
     return `<div class="tlw"><svg class="tl ${small ? "small" : ""}" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">
-      <rect x="0" y="0" width="${W}" height="${H}" rx="3" class="track"/>${segs}${ticks}</svg>${
+      <rect x="0" y="0" width="${W}" height="${H}" rx="3" class="track"/>${dems}${segs}${ticks}</svg>${
       small ? "" : `<div class="tlabs">${labels}</div>`}</div>`;
+  }
+
+  _flameIn(a, start, end) {
+    return (a.timeline || []).reduce((acc, [s, e]) =>
+      acc + Math.max(0, Math.min(e ?? Date.now() / 1000, end) - Math.max(s, start)), 0);
   }
 
   _daily(a) {
@@ -959,6 +986,9 @@ const STYLE = `
   svg.tl.small { height: 12px; }
   .track { fill: var(--secondary-background-color); }
   .seg { fill: var(--bm-burn); } .seg.short { fill: var(--bm-short); }
+  .dem { fill: color-mix(in srgb, var(--bm-burn) 28%, transparent); }
+  .seg.inf { fill-opacity: 0.55; }
+  .flame.demand, .chip.demand { background: color-mix(in srgb, var(--bm-burn) 10%, transparent); color: color-mix(in srgb, var(--bm-burn) 70%, var(--secondary-text-color)); }
   .seg.live { animation: pulse 2s ease-in-out infinite; }
   @keyframes pulse { 50% { opacity: .55; } }
   .tick { stroke: var(--card-background-color, #fff); stroke-width: 2; vector-effect: non-scaling-stroke; }

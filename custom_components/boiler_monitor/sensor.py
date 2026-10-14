@@ -16,6 +16,7 @@ from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import (
+    CONF_FLAME,
     CONF_FLOW_SETPOINT,
     CONF_FLOW_TEMP,
     CONF_INDOOR_TEMPS,
@@ -28,6 +29,7 @@ from .const import (
     DOMAIN,
     MODE_CURVE,
     MODE_FIXED,
+    STATUS_DEMAND,
     STATUS_HEATING,
     STATUS_IDLE,
     STATUS_OFF_SEASON,
@@ -54,6 +56,9 @@ SENSORS: tuple[BoilerSensorDescription, ...] = (
     BoilerSensorDescription(key="last_burn", stat="last_burn_min", translation_key="last_burn", icon="mdi:timer-outline", device_class=SensorDeviceClass.DURATION, native_unit_of_measurement=UnitOfTime.MINUTES, suggested_display_precision=1),
     BoilerSensorDescription(key="duty_cycle", stat="duty_cycle", translation_key="duty_cycle", icon="mdi:percent", state_class=M, native_unit_of_measurement=PERCENTAGE, suggested_display_precision=1),
     BoilerSensorDescription(key="burn_time_today", stat="burn_hours_today", translation_key="burn_time_today", icon="mdi:fire-circle", device_class=SensorDeviceClass.DURATION, state_class=SensorStateClass.TOTAL_INCREASING, native_unit_of_measurement=UnitOfTime.HOURS, suggested_display_precision=2),
+    BoilerSensorDescription(key="demand_time_today", stat="demand_hours_today", translation_key="demand_time_today", icon="mdi:thermostat", device_class=SensorDeviceClass.DURATION, state_class=SensorStateClass.TOTAL_INCREASING, native_unit_of_measurement=UnitOfTime.HOURS, suggested_display_precision=2),
+    BoilerSensorDescription(key="flame_share", stat="flame_share", translation_key="flame_share", icon="mdi:fire-alert", state_class=M, native_unit_of_measurement=PERCENTAGE, suggested_display_precision=0),
+    BoilerSensorDescription(key="starts_per_demand_hour", stat="starts_per_demand_hour", translation_key="starts_per_demand_hour", icon="mdi:fire-circle", state_class=M, native_unit_of_measurement="starts/h", suggested_display_precision=1),
     BoilerSensorDescription(key="condensing_ratio", stat="condensing_ratio", translation_key="condensing_ratio", icon="mdi:water-percent", state_class=M, native_unit_of_measurement=PERCENTAGE, suggested_display_precision=0),
     BoilerSensorDescription(key="delta_t", stat="delta_t", translation_key="delta_t", icon="mdi:thermometer-lines", device_class=SensorDeviceClass.TEMPERATURE, state_class=M, native_unit_of_measurement=UnitOfTemperature.CELSIUS, suggested_display_precision=1),
     BoilerSensorDescription(key="heating_rate", stat="heating_rate", translation_key="heating_rate", icon="mdi:home-thermometer", state_class=M, native_unit_of_measurement="°C/h", suggested_display_precision=2),
@@ -74,12 +79,15 @@ STATUS_DESC = SensorEntityDescription(
     translation_key="status",
     icon="mdi:water-boiler",
     device_class=SensorDeviceClass.ENUM,
-    options=[STATUS_HEATING, STATUS_IDLE, STATUS_OFF_SEASON, STATUS_UNAVAILABLE],
+    options=[STATUS_HEATING, STATUS_DEMAND, STATUS_IDLE, STATUS_OFF_SEASON, STATUS_UNAVAILABLE],
 )
 
 # Needed by entities that don't depend on optional sensors
 REQUIRES: dict[str, tuple[str, ...]] = {
     "condensing_ratio": (CONF_RETURN_TEMP,),
+    "demand_time_today": (CONF_FLAME,),
+    "flame_share": (CONF_FLAME,),
+    "starts_per_demand_hour": (CONF_FLAME,),
     "delta_t": (CONF_FLOW_TEMP, CONF_RETURN_TEMP),
     "heating_rate": (CONF_INDOOR_TEMPS,),
     "balance_point": (CONF_OUTDOOR_TEMP,),
@@ -141,7 +149,7 @@ class BoilerStatusSensor(BoilerEntity, SensorEntity):
     """Main entity: status + everything the card needs as attributes."""
 
     _unrecorded_attributes = frozenset(
-        {"timeline", "daily", "regression", "entities", "stats", "thresholds", "curve_points", "curve_fit", "comfort_points", "comfort", "heatups", "heatup_model"}
+        {"timeline", "demand_timeline", "daily", "regression", "entities", "stats", "thresholds", "curve_points", "curve_fit", "comfort_points", "comfort", "heatups", "heatup_model"}
     )
 
     @property
@@ -179,6 +187,7 @@ class BoilerStatusSensor(BoilerEntity, SensorEntity):
             },
             "sources": {
                 "burner": cfg.get("burner_entity"),
+                "flame": cfg.get(CONF_FLAME),
                 "flow": cfg.get(CONF_FLOW_TEMP),
                 "return": cfg.get(CONF_RETURN_TEMP),
                 "outdoor": cfg.get(CONF_OUTDOOR_TEMP),
@@ -189,6 +198,7 @@ class BoilerStatusSensor(BoilerEntity, SensorEntity):
                 "weather": cfg.get(CONF_WEATHER),
             },
             "timeline": m.timeline(24),
+            "demand_timeline": m.demand_timeline(24) if m.has_flame else [],
             "daily": m.daily(30),
             "regression": m.regression(),
             "comfort_points": m.comfort_points() if cfg.get(CONF_THERMOSTAT) else [],

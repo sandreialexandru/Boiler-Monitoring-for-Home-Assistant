@@ -14,6 +14,7 @@ from .const import (
     CONF_BURNER_ON_STATE,
     CONF_CSV_LOG,
     CONF_EFFECT_DELAY_MIN,
+    CONF_FLAME,
     CONF_FLOW_SETPOINT,
     CONF_FLOW_TEMP,
     CONF_INDOOR_TEMPS,
@@ -76,6 +77,9 @@ def entities_schema(src: dict[str, Any], with_name: bool) -> vol.Schema:
                 CONF_BURNER_ON_STATE,
                 default=src.get(CONF_BURNER_ON_STATE, DEFAULT_BURNER_ON_STATE),
             ): sel.TextSelector(),
+            _opt(CONF_FLAME, src): sel.EntitySelector(
+                sel.EntitySelectorConfig(domain=["binary_sensor", "switch", "input_boolean"])
+            ),
             _opt(CONF_FLOW_TEMP, src): TEMP_SENSOR,
             _opt(CONF_RETURN_TEMP, src): TEMP_SENSOR,
             _opt(CONF_FLOW_SETPOINT, src): TEMP_SENSOR,

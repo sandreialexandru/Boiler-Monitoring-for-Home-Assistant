@@ -8,6 +8,7 @@
           "name": "Nume",
           "burner_entity": "Entitate arzător / cerere de căldură",
           "burner_on_state": "Starea care înseamnă „arzător pornit” (text)",
+          "flame_entity": "Senzor de flacără (binary_sensor) – opțional",
           "flow_temp_entity": "Senzor temperatură tur (°C) – opțional",
           "return_temp_entity": "Senzor temperatură retur (°C) – opțional",
           "flow_setpoint_entity": "Senzor tur cerut / setpoint (°C) – opțional",
@@ -22,8 +23,9 @@
         },
         "data_description": {
           "name": "Un nume pentru această centrală. Se folosește pentru dispozitiv și pentru ID-urile entităților, ex. „Centrala” creează sensor.centrala_status.",
-          "burner_entity": "Entitatea care e PORNITĂ cât timp arde arzătorul (sau cât timp există cerere de căldură): un switch (ex. releul ESPHome care comandă centrala), un binary_sensor (flacără), un input_boolean, o entitate climate (se folosește hvac_action) sau un senzor cu stare text.",
+          "burner_entity": "Entitatea care este ON cât arde arzătorul sau cât există cerere de căldură. Poate fi un switch (de ex. releul ESPHome care comandă centrala), un binary_sensor (flacără), un input_boolean, o entitate climate (se folosește hvac_action) sau un senzor cu stare text. Dacă alegi și un senzor de flacără mai jos, această entitate este cererea de căldură.",
           "burner_on_state": "Starea exactă care înseamnă „arzător pornit”: „on” pentru switch / binary_sensor / input_boolean, „heating” pentru climate, sau textul exact al stării unui senzor.",
+          "flame_entity": "Un binary_sensor care este ON cât arde flacăra, de ex. \"Ariston is flame on\". Dacă îl alegi, entitatea arzătorului de mai sus devine cererea de căldură și arderea se numără doar când există cerere ȘI flacără: flacăra fără cerere (apă caldă menajeră) este ignorată, la fel și pauzele pe care centrala le face singură în timp ce releul cere căldură. Senzorii de flacără din cloud ratează aprinderile scurte; dacă ai senzor de tur, o creștere bruscă a turului în timpul cererii, fără flacără raportată, se numără ca o ardere de 1 minut.",
           "flow_temp_entity": "Temperatura apei calde care iese din centrală spre calorifere, în °C. Necesar pentru ΔT tur-retur.",
           "return_temp_entity": "Temperatura apei care se întoarce de la calorifere în centrală, în °C. Necesar pentru procentul de condensare și alerta „Condensare pierdută”.",
           "flow_setpoint_entity": "Temperatura de tur pe care o urmărește centrala, în °C – ex. „Ariston CH flow setpoint temp”. Cu termoreglarea automată PORNITĂ urmează curba de compensare climatică; OPRITĂ, e temperatura de tur fixă setată de tine. Activează comparația tur real vs cerut și graficul curbei.",
@@ -42,6 +44,7 @@
         "data": {
           "burner_entity": "Entitate arzător / cerere de căldură",
           "burner_on_state": "Starea care înseamnă „arzător pornit” (text)",
+          "flame_entity": "Senzor de flacără (binary_sensor) – opțional",
           "flow_temp_entity": "Senzor temperatură tur (°C) – opțional",
           "return_temp_entity": "Senzor temperatură retur (°C) – opțional",
           "flow_setpoint_entity": "Senzor tur cerut / setpoint (°C) – opțional",
@@ -55,8 +58,9 @@
           "season_state": "Starea care înseamnă „sezon de încălzire activ” (text)"
         },
         "data_description": {
-          "burner_entity": "Entitatea care e PORNITĂ cât timp arde arzătorul (sau cât timp există cerere de căldură): un switch (ex. releul ESPHome care comandă centrala), un binary_sensor (flacără), un input_boolean, o entitate climate (se folosește hvac_action) sau un senzor cu stare text.",
+          "burner_entity": "Entitatea care este ON cât arde arzătorul sau cât există cerere de căldură. Poate fi un switch (de ex. releul ESPHome care comandă centrala), un binary_sensor (flacără), un input_boolean, o entitate climate (se folosește hvac_action) sau un senzor cu stare text. Dacă alegi și un senzor de flacără mai jos, această entitate este cererea de căldură.",
           "burner_on_state": "Starea exactă care înseamnă „arzător pornit”: „on” pentru switch / binary_sensor / input_boolean, „heating” pentru climate, sau textul exact al stării unui senzor.",
+          "flame_entity": "Un binary_sensor care este ON cât arde flacăra, de ex. \"Ariston is flame on\". Dacă îl alegi, entitatea arzătorului de mai sus devine cererea de căldură și arderea se numără doar când există cerere ȘI flacără: flacăra fără cerere (apă caldă menajeră) este ignorată, la fel și pauzele pe care centrala le face singură în timp ce releul cere căldură. Senzorii de flacără din cloud ratează aprinderile scurte; dacă ai senzor de tur, o creștere bruscă a turului în timpul cererii, fără flacără raportată, se numără ca o ardere de 1 minut.",
           "flow_temp_entity": "Temperatura apei calde care iese din centrală spre calorifere, în °C. Necesar pentru ΔT tur-retur.",
           "return_temp_entity": "Temperatura apei care se întoarce de la calorifere în centrală, în °C. Necesar pentru procentul de condensare și alerta „Condensare pierdută”.",
           "flow_setpoint_entity": "Temperatura de tur pe care o urmărește centrala, în °C – ex. „Ariston CH flow setpoint temp”. Cu termoreglarea automată PORNITĂ urmează curba de compensare climatică; OPRITĂ, e temperatura de tur fixă setată de tine. Activează comparația tur real vs cerut și graficul curbei.",
@@ -117,7 +121,8 @@
           "heating": "Încălzește",
           "idle": "În așteptare",
           "off_season": "În afara sezonului",
-          "unavailable": "Indisponibil"
+          "unavailable": "Indisponibil",
+          "demand": "Cerere, flacără stinsă"
         }
       },
       "cycles_today": {
@@ -143,6 +148,15 @@
       },
       "burn_time_today": {
         "name": "Timp de ardere azi"
+      },
+      "demand_time_today": {
+        "name": "Timp cu cerere de căldură azi"
+      },
+      "flame_share": {
+        "name": "Ponderea flăcării din cerere (24 h)"
+      },
+      "starts_per_demand_hour": {
+        "name": "Aprinderi pe oră de cerere (24 h)"
       },
       "condensing_ratio": {
         "name": "Procent în condensare (24h)"

@@ -8,6 +8,7 @@
           "name": "Name",
           "burner_entity": "Burner / heat-demand entity",
           "burner_on_state": "State meaning \"burner on\" (text)",
+          "flame_entity": "Flame sensor (binary_sensor) – optional",
           "flow_temp_entity": "Flow temperature sensor (°C) – optional",
           "return_temp_entity": "Return temperature sensor (°C) – optional",
           "flow_setpoint_entity": "Flow target / setpoint sensor (°C) – optional",
@@ -22,8 +23,9 @@
         },
         "data_description": {
           "name": "A name for this boiler. It is used for the device and for the entity IDs, e.g. \"Centrala\" creates sensor.centrala_status.",
-          "burner_entity": "The entity that is ON while the burner fires (or while there is heat demand). It can be a switch (e.g. the ESPHome relay that drives the boiler), a binary_sensor (flame), an input_boolean, a climate entity (its hvac_action is used) or a sensor with a text state.",
+          "burner_entity": "The entity that is ON while the burner fires or while there is heat demand. It can be a switch (e.g. the ESPHome relay that drives the boiler), a binary_sensor (flame), an input_boolean, a climate entity (its hvac_action is used) or a sensor with a text state. If you also set a flame sensor below, this entity is the heat demand.",
           "burner_on_state": "The exact state that means \"burner on\". Use \"on\" for switch / binary_sensor / input_boolean, \"heating\" for a climate entity, or the exact text of a sensor's state.",
+          "flame_entity": "A binary_sensor that is ON while the flame burns, e.g. \"Ariston is flame on\". When set, the burner entity above is treated as heat demand and a burn is counted only while there is demand AND flame: the flame without demand (domestic hot water) is ignored, and so are the pauses the boiler makes on its own while the relay still asks for heat. Cloud flame sensors miss short ignitions; with a flow temperature sensor set, a sudden flow rise during demand with no reported flame is counted as a 1-minute burn.",
           "flow_temp_entity": "Temperature of the hot water leaving the boiler towards the radiators, in °C. Needed for the flow-return ΔT.",
           "return_temp_entity": "Temperature of the water coming back from the radiators into the boiler, in °C. Needed for the condensing ratio and the \"Condensation lost\" alert.",
           "flow_setpoint_entity": "The flow temperature the boiler is aiming for, in °C – e.g. \"Ariston CH flow setpoint temp\". With automatic thermoregulation ON it follows the weather-compensation curve; with it OFF it is the fixed flow temperature you set. Enables flow-vs-target and the heating-curve chart.",
@@ -42,6 +44,7 @@
         "data": {
           "burner_entity": "Burner / heat-demand entity",
           "burner_on_state": "State meaning \"burner on\" (text)",
+          "flame_entity": "Flame sensor (binary_sensor) – optional",
           "flow_temp_entity": "Flow temperature sensor (°C) – optional",
           "return_temp_entity": "Return temperature sensor (°C) – optional",
           "flow_setpoint_entity": "Flow target / setpoint sensor (°C) – optional",
@@ -55,8 +58,9 @@
           "season_state": "State meaning \"heating season active\" (text)"
         },
         "data_description": {
-          "burner_entity": "The entity that is ON while the burner fires (or while there is heat demand). It can be a switch (e.g. the ESPHome relay that drives the boiler), a binary_sensor (flame), an input_boolean, a climate entity (its hvac_action is used) or a sensor with a text state.",
+          "burner_entity": "The entity that is ON while the burner fires or while there is heat demand. It can be a switch (e.g. the ESPHome relay that drives the boiler), a binary_sensor (flame), an input_boolean, a climate entity (its hvac_action is used) or a sensor with a text state. If you also set a flame sensor below, this entity is the heat demand.",
           "burner_on_state": "The exact state that means \"burner on\". Use \"on\" for switch / binary_sensor / input_boolean, \"heating\" for a climate entity, or the exact text of a sensor's state.",
+          "flame_entity": "A binary_sensor that is ON while the flame burns, e.g. \"Ariston is flame on\". When set, the burner entity above is treated as heat demand and a burn is counted only while there is demand AND flame: the flame without demand (domestic hot water) is ignored, and so are the pauses the boiler makes on its own while the relay still asks for heat. Cloud flame sensors miss short ignitions; with a flow temperature sensor set, a sudden flow rise during demand with no reported flame is counted as a 1-minute burn.",
           "flow_temp_entity": "Temperature of the hot water leaving the boiler towards the radiators, in °C. Needed for the flow-return ΔT.",
           "return_temp_entity": "Temperature of the water coming back from the radiators into the boiler, in °C. Needed for the condensing ratio and the \"Condensation lost\" alert.",
           "flow_setpoint_entity": "The flow temperature the boiler is aiming for, in °C – e.g. \"Ariston CH flow setpoint temp\". With automatic thermoregulation ON it follows the weather-compensation curve; with it OFF it is the fixed flow temperature you set. Enables flow-vs-target and the heating-curve chart.",
@@ -117,7 +121,8 @@
           "heating": "Heating",
           "idle": "Idle",
           "off_season": "Off season",
-          "unavailable": "Unavailable"
+          "unavailable": "Unavailable",
+          "demand": "Demand, flame off"
         }
       },
       "cycles_today": {
@@ -143,6 +148,15 @@
       },
       "burn_time_today": {
         "name": "Burn time today"
+      },
+      "demand_time_today": {
+        "name": "Heat demand time today"
+      },
+      "flame_share": {
+        "name": "Flame share of demand (24 h)"
+      },
+      "starts_per_demand_hour": {
+        "name": "Ignitions per demand hour (24 h)"
       },
       "condensing_ratio": {
         "name": "Condensing ratio (24h)"

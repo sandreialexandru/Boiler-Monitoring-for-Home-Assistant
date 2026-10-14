@@ -92,6 +92,7 @@ The card is registered automatically, so you don't need to add a dashboard resou
 | Name | ✅ | Used for entity IDs (`sensor.<name>_status`…) |
 | Burner / heat-demand entity | ✅ | `switch`, `binary_sensor`, `input_boolean`, `climate` or `sensor` |
 | State meaning "burner on" | ✅ | `on` for switches and binary sensors. For a **climate** entity, the `hvac_action` value (`heating`). For a text sensor, the exact state string |
+| Flame sensor | – | A `binary_sensor` that is on while the flame burns (e.g. Ariston *is flame on*). With it, the burner entity above becomes **heat demand** and only demand **and** flame counts as a burn. See [Relay + flame sensor](#relay--flame-sensor) |
 | Flow temperature sensor | – | Enables ΔT |
 | Return temperature sensor | – | Enables condensing ratio and the condensation-lost alert |
 | Outdoor temperature sensor | – | Enables balance point and burn per degree-day |
@@ -106,7 +107,27 @@ The card is registered automatically, so you don't need to add a dashboard resou
 Entities that need a sensor you didn't configure are simply not created.
 
 > **Which burner entity should I pick?**
-> If the boiler is switched by a relay from a thermostat (e.g. Generic Thermostat + ESPHome relay), the relay shows *heat demand*, not the flame. Short-cycling then means the **thermostat** is cycling, and you fix it with hysteresis or `min_cycle_duration`. If your boiler integration exposes the real flame state, use that to see the boiler's own cycling. You can add the integration **twice** (once per source) and compare them side by side.
+> If the boiler is switched by a relay from a thermostat (e.g. Generic Thermostat + ESPHome relay), the relay shows *heat demand*, not the flame. On its own it cannot see the boiler stopping the flame while the relay still asks for heat. If your boiler integration exposes the flame state, set it as the **Flame sensor** as well (next section).
+
+### Relay + flame sensor
+
+A modulating boiler does not burn all the time the relay is closed. When the house needs less heat than the boiler's minimum power, it fires for a minute or two, overshoots the flow target, stops, waits, and fires again, while the relay stays on the whole time. Seen through the relay alone, that is one long, healthy burn. It is really an internal short cycle.
+
+With both entities set:
+
+| | Relay (demand) | Flame | Counted as |
+|---|---|---|---|
+| Heating | on | on | **burn** |
+| Boiler pausing on its own | on | off | **demand, flame off**: not burn time, the next ignition is a new cycle |
+| Domestic hot water | off | on | ignored |
+| Idle | off | off | idle |
+
+- **Burn time, cycles, short cycles, average burn/off, condensing %, ΔT and flow-vs-target** use the flame.
+- **Warm-up time** and the **heating-effect check** use the demand: they are about the house, not about how the boiler spreads the heat.
+- **Missed ignitions.** Cloud flame sensors (Ariston, …) are polled about once a minute and miss burns of a minute or less. If a flow sensor is set, a jump of ≥ 4 °C in the flow temperature during demand, with no flame reported in the last 2 minutes, is counted as a 1-minute burn. These show lighter on the timeline and are counted in `inferred_starts_24h`.
+- If the flame sensor is unavailable, the relay is used alone until it comes back.
+- Hot water drawn while the relay is on cannot be told apart from heating and is counted as burn.
+- Statistics recorded before the flame sensor was added stay as they were (relay time). Use the `reset_statistics` action for a clean start.
 
 ### Step 2: tuning (⋮ → **Configure**)
 
@@ -131,7 +152,7 @@ All entities belong to one device named after your integration. The examples use
 
 | Entity | Unit | Description |
 |---|---|---|
-| `sensor.centrala_status` | – | `heating` / `idle` / `off_season` / `unavailable`. Its attributes carry everything the card needs |
+| `sensor.centrala_status` | – | `heating` / `demand` (flame sensor set: heat demand, flame off) / `idle` / `off_season` / `unavailable`. Its attributes carry everything the card needs |
 | `sensor.centrala_cycles_today` | cycles | Burner starts since local midnight |
 | `sensor.centrala_short_cycles_today` | cycles | Of which short cycles |
 | `sensor.centrala_cycles_per_hour_24h` | cycles/h | Rolling 24 h |
@@ -140,6 +161,9 @@ All entities belong to one device named after your integration. The examples use
 | `sensor.centrala_last_burn_duration` | min | |
 | `sensor.centrala_duty_cycle_24h` | % | Share of the last 24 h with the burner on |
 | `sensor.centrala_burn_time_today` | h | `total_increasing`, so it works with long-term statistics and the statistics-graph card |
+| `sensor.centrala_heat_demand_time_today` | h | Time with the relay on since midnight *(needs flame sensor)* |
+| `sensor.centrala_flame_share_of_demand_24_h` | % | Flame time ÷ demand time, last 24 h. Low = the boiler fires only briefly while the relay asks for heat *(needs flame sensor)* |
+| `sensor.centrala_ignitions_per_demand_hour_24_h` | starts/h | Ignitions per hour of demand, last 24 h. Above ~4 the boiler is cycling on its own *(needs flame sensor)* |
 | `sensor.centrala_condensing_ratio_24h` | % | Share of burn time with return < threshold *(needs return)* |
 | `sensor.centrala_flow_return_dt` | °C | Live flow − return *(needs flow + return)* |
 | `sensor.centrala_heating_rate` | °C/h | Room warming rate from the last effect check *(needs indoor)* |
@@ -212,7 +236,7 @@ Hover any bar, dot or timeline segment with the mouse, or **tap** it on a phone 
 
 | Where | What the tooltip shows |
 |---|---|
-| Last 24 hours (a segment) | start – end time, burn duration, whether it was a short cycle |
+| Last 24 hours (a segment) | start – end time, burn duration, whether it was a short cycle. With a flame sensor, the pale band behind the flames is the heat demand: demand time and flame time within it |
 | Last 14 days (a bar) / Burn vs outdoor (a dot) | the day, burn time, cycles (and how many were short), average outdoor temperature, condensing %, average ΔT |
 | Heating curve (a dot) | the day and hour, outdoor temperature, target flow, actual flow, actual − target, regulation mode |
 | Comfort vs outdoor (a dot) | the day and hour, outdoor, indoor, thermostat target, indoor − target, burner on %, short cycles |
@@ -270,6 +294,9 @@ The ranges below are rules of thumb for a gas condensing boiler with radiators. 
 | **Burn today** | total burn time since midnight | – | compare with days of similar weather |
 | **Condensing** | share of burn time with the return at or below the threshold | **≥ 80 %** (green) | < 50 % (red): efficiency lost |
 | **Heating rate** | how fast the rooms warmed after the burner started | 0.3–1 °C/h | ≤ 0: burning without effect |
+| **Demand today** *(flame sensor)* | how long the relay asked for heat since midnight | – | much longer than *Burn today* is normal in mild weather |
+| **Flame / demand** *(flame sensor)* | share of the demand time with the flame on | 50–100 % | below ~30 % with many ignitions: the boiler's minimum power is too high for the load |
+| **Ignitions / demand h** *(flame sensor)* | starts per hour while the relay is on | ≤ 2–3 | > 4 (amber): the boiler cycles on its own. Raise the anti-cycling delay in the boiler menu, open all radiator valves, or raise the curve a little |
 
 ### Last 24 hours
 
@@ -278,6 +305,7 @@ Every orange segment is one burn. Its width is how long it lasted, and the gap b
 - **Many thin segments packed together** mean the boiler is switching on and off all the time.
 - **Red** = short cycle (it restarted too soon after the previous stop). Note **when** they happen: often in the morning after a night set-back, or at midday when the sun comes out.
 - The segment that **pulses** is the burn happening right now.
+- With a **flame sensor**, a pale band behind the segments shows the heat demand (relay on). Thin flames spread along a long band mean the boiler keeps stopping and restarting while the thermostat asks for heat. Lighter segments are ignitions seen only from the flow jump.
 
 ### Last 14 days
 

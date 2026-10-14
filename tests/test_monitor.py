@@ -841,3 +841,112 @@ async def test_regression_skips_day_with_burner_unavailable(hass: HomeAssistant,
     assert reg is not None and reg["n"] >= 3
     assert reg["slope"] == pytest.approx(-0.8, abs=0.1)
     assert float(st(hass, "sensor.centrala_balance_point").state) == pytest.approx(15, abs=1)
+
+
+FLAME = "binary_sensor.flacara"
+FLAME_DATA = {**DATA, "flame_entity": FLAME, "thermostat_entity": "climate.termostat"}
+
+
+async def flame(hass, on: bool):
+    hass.states.async_set(FLAME, "on" if on else "off")
+    await hass.async_block_till_done()
+
+
+async def flow(hass, value):
+    hass.states.async_set("sensor.tur", value, {"device_class": "temperature"})
+    await hass.async_block_till_done()
+
+
+async def test_flame_entity_demand_vs_flame(hass: HomeAssistant, freezer):
+    """Relay = demand, flame = burn. Flame without demand is hot water; pauses during demand are not burn."""
+    freezer.move_to("2026-11-10 08:00:30+02:00")
+    thermostat(hass, target=22.0, current=20.0)
+    temps(hass, flow=30, ret=28, liv=20.0, dor=20.0)
+    await flame(hass, False)
+    await burner(hass, False)
+    await setup(hass, FLAME_DATA, {**OPTIONS, "notify_service": ""})
+    status = lambda: st(hass, "sensor.centrala_status").state
+
+    # Domestic hot water: flame without demand is ignored
+    await flame(hass, True)
+    await advance(hass, freezer, 5)
+    await flame(hass, False)
+    assert status() == "idle"
+    assert st(hass, "sensor.centrala_cycles_today").state == "0"
+
+    await advance(hass, freezer, 70)
+    # Demand, the boiler fires 2 min every 7 min (modulation too high for the load)
+    await burner(hass, True)
+    assert status() == "demand"
+    for _ in range(4):
+        await flame(hass, True)
+        assert status() == "heating"
+        await advance(hass, freezer, 2)
+        await flame(hass, False)
+        assert status() == "demand"
+        await advance(hass, freezer, 5)
+    s = st(hass, "sensor.centrala_status").attributes["stats"]
+    assert s["cycles_today"] == 4
+    assert s["short_cycles_today"] == 3
+    assert s["burn_hours_today"] == pytest.approx(8 / 60, abs=0.01)
+    assert s["demand_hours_today"] == pytest.approx(28 / 60, abs=0.01)
+    assert st(hass, "binary_sensor.centrala_short_cycling").state == "on"
+
+    # A flame the cloud sensor missed: flow jumps, flame stays "off"
+    await flow(hass, 31)
+    await flow(hass, 42)
+    freezer.tick(timedelta(seconds=11))
+    async_fire_time_changed(hass)
+    await hass.async_block_till_done()
+    tl = st(hass, "sensor.centrala_status").attributes["timeline"]
+    assert tl[-1][3] == 1  # inferred
+    assert tl[-1][1] - tl[-1][0] == pytest.approx(60, abs=2)
+    assert st(hass, "sensor.centrala_status").attributes["stats"]["cycles_today"] == 5
+
+    # A jump right after a reported flame is that flame, not a new one
+    await flow(hass, 30)
+    await advance(hass, freezer, 5)
+    await flame(hass, True)
+    await advance(hass, freezer, 2)
+    await flame(hass, False)
+    await flow(hass, 41)
+    freezer.tick(timedelta(seconds=11))
+    async_fire_time_changed(hass)
+    await hass.async_block_till_done()
+    assert st(hass, "sensor.centrala_status").attributes["stats"]["cycles_today"] == 6
+
+    # Flame share and ignitions per demand hour need enough demand time
+    await flow(hass, 30)
+    await advance(hass, freezer, 20)
+    s = st(hass, "sensor.centrala_status").attributes["stats"]
+    assert 0 < float(st(hass, "sensor.centrala_flame_share_of_demand_24_h").state) < 40
+    assert s["starts_per_demand_hour"] > 4
+    assert st(hass, "sensor.centrala_status").attributes["demand_timeline"][-1][1] is None
+
+
+async def test_flame_entity_heatup_spans_the_demand(hass: HomeAssistant, freezer):
+    """Warm-up is measured from demand start to the setpoint, not per flame."""
+    freezer.move_to("2026-11-10 05:00:30+02:00")
+    thermostat(hass, target=21.0, current=19.0)
+    temps(hass, out=5, liv=19.0, dor=19.0)
+    await flame(hass, False)
+    await burner(hass, False)
+    await setup(hass, FLAME_DATA, {**OPTIONS, "notify_service": ""})
+    await advance(hass, freezer, 90)
+    await burner(hass, True)
+    room = 19.0
+    for _ in range(6):  # 6 x (3 min flame + 7 min pause) = 60 min, +2 °C
+        await flame(hass, True)
+        for _ in range(3):
+            room += 2 / 60
+            temps(hass, out=5, liv=room, dor=room)
+            await advance(hass, freezer, 1)
+        await flame(hass, False)
+        for _ in range(7):
+            room += 2 / 60
+            temps(hass, out=5, liv=room, dor=room)
+            await advance(hass, freezer, 1)
+    heatups = st(hass, "sensor.centrala_status").attributes["heatups"]
+    assert len(heatups) == 1
+    assert heatups[0]["minutes"] == pytest.approx(60, abs=3)
+    assert heatups[0]["rate"] == pytest.approx(30, abs=3)

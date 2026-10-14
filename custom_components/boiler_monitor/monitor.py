@@ -31,6 +31,7 @@ from .const import (
     CONF_BURNER_ON_STATE,
     CONF_CSV_LOG,
     CONF_EFFECT_DELAY_MIN,
+    CONF_FLAME,
     CONF_FLOW_SETPOINT,
     CONF_FLOW_TEMP,
     CONF_INDOOR_TEMPS,
@@ -77,10 +78,14 @@ from .const import (
     MODE_CURVE,
     MODE_FIXED,
     EVENT_SHORT_CYCLE,
+    FLAME_INFER_GUARD_S,
+    FLAME_INFER_RISE,
+    FLAME_INFER_S,
     MAX_NA_S_PER_HOUR,
     MIN_VALID_FLOW_TARGET,
     SAMPLE_INTERVAL_SECONDS,
     SIGNAL_UPDATE,
+    STATUS_DEMAND,
     STATUS_HEATING,
     STATUS_IDLE,
     STATUS_OFF_SEASON,
@@ -120,6 +125,7 @@ def _hour_key(ts: float) -> int:
 def _new_bucket() -> dict[str, float]:
     return {
         "burn_s": 0.0,  # seconds burner on
+        "dem_s": 0.0,  # seconds with heat demand (relay on), sampled
         "na_s": 0.0,  # seconds with the burner entity unavailable/unknown
         "cycles": 0,  # completed cycles (attributed to start hour)
         "short": 0,  # short cycles
@@ -159,6 +165,8 @@ class BoilerMonitor:
         self._store: Store = Store(hass, STORAGE_VERSION, f"{DOMAIN}.{entry.entry_id}")
         self._unsubs: list[CALLBACK_TYPE] = []
         self._effect_unsub: CALLBACK_TYPE | None = None
+        self._infer_unsub: CALLBACK_TYPE | None = None
+        self._prev_flow: float | None = None
 
         self.cycles: list[dict[str, Any]] = []
         self.hours: dict[int, dict[str, float]] = {}
@@ -175,8 +183,11 @@ class BoilerMonitor:
         self.last_heating_rate: float | None = None
         self.last_rise: float | None = None
         self.season_active = True
-        self.burner_on = False
+        self.burner_on = False  # flame (or the burner entity when no flame entity is set)
+        self.demand_on = False  # heat demand: the burner entity
         self.burner_available = True
+        # Heat-demand periods [start, end] (same as the cycles without a flame entity)
+        self.demands: list[dict[str, Any]] = []
         self.pressure_problem = False
         self.heatups: list[dict[str, Any]] = []
         self._heatup: dict[str, Any] | None = None
@@ -200,6 +211,10 @@ class BoilerMonitor:
         return self.cfg.get(CONF_NAME, "Boiler")
 
     @property
+    def has_flame(self) -> bool:
+        return bool(self.cfg.get(CONF_FLAME))
+
+    @property
     def short_cycle_s(self) -> float:
         return float(self._opt(CONF_SHORT_CYCLE_MIN, DEFAULT_SHORT_CYCLE_MIN)) * 60
 
@@ -218,6 +233,7 @@ class BoilerMonitor:
         self.hours = {int(k): v for k, v in data.get("hours", {}).items()}
         self.last_alert = data.get("last_alert", {})
         self.heatups = data.get("heatups", [])
+        self.demands = data.get("demands", [])
         last_saved = data.get("saved_at")
 
         now = dt_util.utcnow().timestamp()
@@ -229,12 +245,18 @@ class BoilerMonitor:
             c = self.cycles[-1]
             c["end"] = max(c["start"], float(last_saved or c["start"]))
             c["partial"] = True
+        if self.demands and self.demands[-1].get("end") is None:
+            d = self.demands[-1]
+            d["end"] = max(d["start"], float(last_saved or d["start"]))
+            d["partial"] = True
 
         self._refresh_season()
         self._refresh_burner(now, initial=True)
 
         cfg = self.cfg
         watched = [cfg[CONF_BURNER]]
+        if cfg.get(CONF_FLAME):
+            watched.append(cfg[CONF_FLAME])
         if cfg.get(CONF_SEASON_ENTITY):
             watched.append(cfg[CONF_SEASON_ENTITY])
         self._unsubs.append(
@@ -259,6 +281,13 @@ class BoilerMonitor:
                     self.hass, [cfg[CONF_RETURN_TEMP]], self._on_return_event
                 )
             )
+        if cfg.get(CONF_FLAME) and cfg.get(CONF_FLOW_TEMP):
+            self._prev_flow = self.flow_temp()
+            self._unsubs.append(
+                async_track_state_change_event(
+                    self.hass, [cfg[CONF_FLOW_TEMP]], self._on_flow_event
+                )
+            )
         self._unsubs.append(
             async_track_time_interval(
                 self.hass, self._on_tick, timedelta(seconds=SAMPLE_INTERVAL_SECONDS)
@@ -272,6 +301,9 @@ class BoilerMonitor:
         if self._effect_unsub:
             self._effect_unsub()
             self._effect_unsub = None
+        if self._infer_unsub:
+            self._infer_unsub()
+            self._infer_unsub = None
         self._account_burn(dt_util.utcnow().timestamp())
         await self._store.async_save(self._data_to_save())
 
@@ -281,6 +313,7 @@ class BoilerMonitor:
             "hours": {str(k): v for k, v in self.hours.items()},
             "last_alert": self.last_alert,
             "heatups": self.heatups,
+            "demands": self.demands,
             "saved_at": dt_util.utcnow().timestamp(),
         }
 
@@ -289,6 +322,7 @@ class BoilerMonitor:
 
     async def async_reset(self) -> None:
         self.cycles = [c for c in self.cycles if c.get("end") is None]
+        self.demands = [d for d in self.demands if d.get("end") is None]
         self.hours = {}
         self.last_alert = {}
         self.heatups = []
@@ -401,6 +435,7 @@ class BoilerMonitor:
             if was and not self.season_active:
                 # Season ended: close an open cycle silently.
                 self._close_open_cycle(now, log=False)
+                self._end_demand(now)
             elif not was and self.season_active:
                 self._refresh_burner(now, initial=True)
         else:
@@ -475,6 +510,8 @@ class BoilerMonitor:
         self._check_pressure(now)
         if not self.burner_available:
             _add(self._bucket(now), "na_s", dt)
+        if self.season_active and self.demand_on:
+            _add(self._bucket(now), "dem_s", dt)
         if self.season_active:
             self._sample(now, dt)
             self._check_heatup(now)
@@ -497,28 +534,45 @@ class BoilerMonitor:
                 return c
         return None
 
+    def _flame_on(self) -> bool | None:
+        ent = self.cfg.get(CONF_FLAME)
+        st = self.hass.states.get(ent) if ent else None
+        if st is None or st.state in (STATE_UNAVAILABLE, STATE_UNKNOWN):
+            return None
+        return st.state.lower() in ("on", "true", "1")
+
     def _refresh_burner(self, now: float, initial: bool = False) -> None:
         st = self.hass.states.get(self.cfg[CONF_BURNER])
-        on = self._is_burner_on(st)
+        demand = self._is_burner_on(st)
         was_available = self.burner_available
-        self.burner_available = on is not None
-        if on is None:
+        self.burner_available = demand is not None
+        if demand is None:
             # We no longer know what the burner does: stop counting. A burn in
             # progress ends here as partial, so only the observed part counts.
             self.burner_on = False
+            self.demand_on = False
             self._close_lost_cycle(now)
+            self._end_demand(now, lost=True)
             return
+        on = demand
+        if self.has_flame:
+            # Flame without demand is domestic hot water: not heating.
+            # Flame entity unavailable (cloud outage): fall back to the demand.
+            flame = self._flame_on()
+            on = demand and (demand if flame is None else flame)
         prev = self.burner_on
         self.burner_on = on
+        self.demand_on = demand
         if not self.season_active:
             return
+        self._update_demand(now, demand, partial=initial or not was_available)
         if on and self._open_cycle() is None:
             # Coming back already on: the real start was not observed.
             self._start_cycle(now, partial=initial or not was_available)
         elif not on and self._open_cycle() is not None and (prev or initial):
             self._stop_cycle(now)
 
-    def _start_cycle(self, now: float, partial: bool = False) -> None:
+    def _start_cycle(self, now: float, partial: bool = False, inferred: bool = False) -> None:
         last = self._last_closed_cycle()
         # Off-time is measured from the *recorded* stop of the previous cycle
         # (persisted), never from last_changed, so a restart cannot fake a
@@ -529,11 +583,6 @@ class BoilerMonitor:
             off_s = now - last["end"]
 
         short = off_s is not None and off_s < self.short_cycle_s
-        # For heat-up detection, a burner that has been off since HA started also counts
-        heat_off = off_s
-        if heat_off is None and not partial and last is None:
-            heat_off = now - self.started_at
-        self._maybe_open_heatup(now, heat_off)
         cycle = {
             "start": now,
             "end": None,
@@ -544,6 +593,8 @@ class BoilerMonitor:
             "indoor_start": _r(self.indoor_avg(), 2),
             "ret_start": _r(self.return_temp()),
         }
+        if inferred:
+            cycle["inferred"] = True
         self.cycles.append(cycle)
         self._burn_accounted_until = now
         b = self._bucket(now)
@@ -551,7 +602,7 @@ class BoilerMonitor:
         if short:
             b["short"] += 1
 
-        self._csv(now, "START", off_min=_r(off_s / 60 if off_s else None))
+        self._csv(now, "START", off_min=_r(off_s / 60 if off_s else None), extra="inferred" if inferred else "")
         if short:
             self._alert_short_cycle(off_s or 0)
 
@@ -585,11 +636,8 @@ class BoilerMonitor:
                 b["short"] = max(0, b["short"] - 1)
             b["burn_s"] = max(0.0, b["burn_s"] - burn_s)
             self._burn_accounted_until = None
-            if self._heatup and self._heatup["start"] == cycle["start"]:
-                self._heatup = None  # it was a glitch, not a heat-up
             return
         cycle["end"] = now
-        self._close_heatup(now)
         cycle["ret_end"] = _r(self.return_temp())
         cycle["flow_end"] = _r(self.flow_temp())
         cycle["indoor_end"] = _r(self.indoor_avg(), 2)
@@ -630,9 +678,93 @@ class BoilerMonitor:
         # average burn time nor for the off-time of the next cycle.
         cycle["partial"] = True
         self._burn_accounted_until = None
-        self._close_heatup(now)
         self._csv(now, "UNAVAILABLE", burn_min=_r((now - cycle["start"]) / 60))
         self._save()
+
+    # ----------------------------------------------------------- heat demand
+    def _open_demand(self) -> dict[str, Any] | None:
+        if self.demands and self.demands[-1].get("end") is None:
+            return self.demands[-1]
+        return None
+
+    def _update_demand(self, now: float, demand: bool, partial: bool) -> None:
+        seg = self._open_demand()
+        if demand and seg is None:
+            last = next((d for d in reversed(self.demands) if d.get("end") is not None), None)
+            off_s: float | None = None
+            if not partial and last is not None and not last.get("partial"):
+                off_s = now - last["end"]
+            elif not partial and last is None:
+                off_s = now - self.started_at  # no demand since HA started
+            self.demands.append({"start": now, "end": None, "partial": partial})
+            # Heat-up is about the house: measured from demand start to the setpoint,
+            # whatever the flame does in between.
+            self._maybe_open_heatup(now, off_s)
+        elif not demand and seg is not None:
+            self._end_demand(now)
+
+    def _end_demand(self, now: float, lost: bool = False) -> None:
+        seg = self._open_demand()
+        if seg is None:
+            return
+        min_burn = float(self._opt(CONF_MIN_BURN_SECONDS, DEFAULT_MIN_BURN_SECONDS))
+        if not lost and not seg.get("partial") and now - seg["start"] < min_burn:
+            self.demands.pop()  # relay glitch
+            if self._heatup and self._heatup["start"] == seg["start"]:
+                self._heatup = None
+            return
+        seg["end"] = now
+        if lost:
+            seg["partial"] = True
+        self._close_heatup(now)
+
+    def _demand_seconds(self, start: float, end: float) -> float:
+        total = 0.0
+        for d in self.demands:
+            d_end = d["end"] if d.get("end") is not None else end
+            total += max(0.0, min(d_end, end) - max(d["start"], start))
+        return total
+
+    @callback
+    def _on_flow_event(self, event: Event) -> None:
+        """A flow jump with demand and no reported flame = an ignition the cloud missed."""
+        new = event.data.get("new_state")
+        val = _f(new.state) if new else None
+        prev = self._prev_flow
+        if val is not None:
+            self._prev_flow = val
+        if val is None or prev is None or val - prev < FLAME_INFER_RISE:
+            return
+        if self._infer_unsub is not None:
+            return
+        t_event = dt_util.utcnow().timestamp()
+        # Give the flame entity a moment: it often updates in the same poll.
+        self._infer_unsub = async_call_later(self.hass, 10, self._make_infer(t_event))
+
+    def _make_infer(self, t_event: float) -> Callable:
+        @callback
+        def _infer(_now: datetime) -> None:
+            self._infer_unsub = None
+            if not (self.season_active and self.demand_on and self.burner_available):
+                return
+            if self.burner_on or self._open_cycle() is not None:
+                return
+            last = self._last_closed_cycle()
+            if last is not None and t_event - last["end"] < FLAME_INFER_GUARD_S:
+                return  # the jump belongs to the flame that was just reported
+            start = t_event - FLAME_INFER_S
+            seg = self._open_demand()
+            if seg is not None:
+                start = max(start, seg["start"])
+            if last is not None:
+                start = max(start, last["end"] + 1)
+            if t_event - start < 1:
+                return
+            self._start_cycle(start, inferred=True)
+            self._stop_cycle(t_event)
+            self._notify_entities()
+
+        return _infer
 
     def _make_effect_check(self, cycle: dict[str, Any], started: float) -> Callable:
         @callback
@@ -654,7 +786,8 @@ class BoilerMonitor:
             # Only a burner that kept running says something about the rooms.
             # A short burn in mild weather, or rooms already at the setpoint,
             # is the thermostat being satisfied, not heating without effect.
-            duty = self._burn_seconds(started, now) / max(now - started, 1.0)
+            # Heat demand, not flame: a modulating boiler may fire only part of the time.
+            duty = self._demand_seconds(started, now) / max(now - started, 1.0)
             sp = self.thermostat_setpoint()
             if duty < EFFECT_MIN_DUTY or (sp is not None and cur >= sp):
                 self._notify_entities()
@@ -936,6 +1069,8 @@ class BoilerMonitor:
         cut_c = now - CYCLE_RETENTION_HOURS * 3600
         if self.cycles and self.cycles[0]["start"] < cut_c:
             self.cycles = [c for c in self.cycles if c["start"] >= cut_c or c.get("end") is None]
+        if self.demands and self.demands[0]["start"] < cut_c:
+            self.demands = [d for d in self.demands if d["start"] >= cut_c or d.get("end") is None]
         cut_h = now - DAILY_RETENTION_DAYS * 86400
         for k in [k for k in self.hours if k < cut_h]:
             del self.hours[k]
@@ -953,7 +1088,11 @@ class BoilerMonitor:
             return STATUS_UNAVAILABLE
         if not self.season_active:
             return STATUS_OFF_SEASON
-        return STATUS_HEATING if self.burner_on else STATUS_IDLE
+        if self.burner_on:
+            return STATUS_HEATING
+        if self.has_flame and self.demand_on:
+            return STATUS_DEMAND
+        return STATUS_IDLE
 
     def _window_cycles(self, now: float, seconds: float) -> list[dict[str, Any]]:
         return [c for c in self.cycles if c["start"] >= now - seconds]
@@ -1071,6 +1210,8 @@ class BoilerMonitor:
 
         reg = self.regression()
         hdd = self.burn_per_hdd(7)
+        dem_24 = self._demand_seconds(now - day, now)
+        n_starts = len([c for c in win if not c.get("partial")])
 
         return {
             "cycles_today": len(today),
@@ -1099,6 +1240,12 @@ class BoilerMonitor:
             "delta_t": _r(self.delta_t()),
             "heating_rate": self.last_heating_rate,
             "balance_point": reg.get("balance_point") if reg else None,
+            "demand_hours_today": round(self._demand_seconds(today_start, now) / 3600, 2),
+            "flame_share": _r(min(100.0, 100 * self._burn_seconds(now - day, now) / dem_24))
+            if dem_24 >= 600
+            else None,
+            "starts_per_demand_hour": _r(n_starts / (dem_24 / 3600), 1) if dem_24 >= 1800 else None,
+            "inferred_starts_24h": sum(1 for c in win if c.get("inferred")),
             "burn_per_hdd": hdd,
         }
 
@@ -1127,6 +1274,7 @@ class BoilerMonitor:
                 {
                     "date": d,
                     "burn_h": round(a["burn_s"] / 3600, 2),
+                "demand_h": round(a["dem_s"] / 3600, 2),
                     "cycles": int(a["cycles"]),
                     "short": int(a["short"]),
                     "outdoor": _r(a["out_sum"] / a["out_n"]) if a["out_n"] else None,
@@ -1183,8 +1331,23 @@ class BoilerMonitor:
             end = c.get("end")
             if (end or now) < now - hours * 3600:
                 continue
-            out.append([int(c["start"]), int(end) if end else None, 1 if c.get("short") else 0])
+            out.append(
+                [
+                    int(c["start"]),
+                    int(end) if end else None,
+                    1 if c.get("short") else 0,
+                    1 if c.get("inferred") else 0,
+                ]
+            )
         return out
+
+    def demand_timeline(self, hours: int = 24) -> list[list[Any]]:
+        now = dt_util.utcnow().timestamp()
+        return [
+            [int(d["start"]), int(d["end"]) if d.get("end") else None]
+            for d in self.demands
+            if (d.get("end") or now) >= now - hours * 3600
+        ]
 
     # ------------------------------------------------------------- outputs
     def _notify(self, kind: str, title: str, message: str) -> None:

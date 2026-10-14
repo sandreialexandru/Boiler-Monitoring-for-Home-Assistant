@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 DOMAIN = "boiler_monitor"
-VERSION = "1.4.0"
+VERSION = "1.5.0"
 
 # Config (entities) — set in config flow
 CONF_NAME = "name"
@@ -19,6 +19,7 @@ CONF_THERMOREG = "thermoregulation_entity"
 CONF_PRESSURE = "pressure_entity"
 CONF_THERMOSTAT = "thermostat_entity"
 CONF_WEATHER = "weather_entity"
+CONF_FLAME = "flame_entity"
 
 # Options (tuning) — editable later
 CONF_SHORT_CYCLE_MIN = "short_cycle_minutes"
@@ -53,6 +54,12 @@ MAX_NA_S_PER_HOUR = 600
 # Flow targets below this are a sensor reporting 0 / garbage, never a setpoint.
 MIN_VALID_FLOW_TARGET = 10.0
 
+# Flame entity: a burn the cloud flame sensor missed shows up as a jump in
+# the flow temperature while there is heat demand and no flame is reported.
+FLAME_INFER_RISE = 4.0  # °C between two flow readings
+FLAME_INFER_S = 60  # burn time credited to such an ignition
+FLAME_INFER_GUARD_S = 120  # ignore jumps this soon after a reported flame
+
 # Retention
 CYCLE_RETENTION_HOURS = 7 * 24
 DAILY_RETENTION_DAYS = 60
@@ -75,6 +82,7 @@ SIGNAL_UPDATE = f"{DOMAIN}_update_{{}}"
 
 STATUS_HEATING = "heating"
 STATUS_IDLE = "idle"
+STATUS_DEMAND = "demand"  # heat demand, flame off (flame entity configured)
 STATUS_OFF_SEASON = "off_season"
 STATUS_UNAVAILABLE = "unavailable"
 
