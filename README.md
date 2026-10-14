@@ -140,7 +140,7 @@ With both entities set:
 - **Burn time, cycles, short cycles, average burn/off, condensing %, ΔT and flow-vs-target** use the flame.
 - **Warm-up time** and the **heating-effect check** use the demand: they are about the house, not about how the boiler spreads the heat.
 - **Missed ignitions.** Cloud flame sensors (Ariston, …) are polled about once a minute and miss burns of a minute or less. If a flow sensor is set, a jump of ≥ 4 °C in the flow temperature during demand, with no flame reported in the last 2 minutes, is counted as a 1-minute burn. These show lighter on the timeline and are counted in `inferred_starts_24h`.
-- If the flame sensor is unavailable, the relay is used alone until it comes back.
+- If the flame sensor is unavailable (e.g. the cloud integration still loading after a restart), nothing is counted as burn for the first 10 minutes; after that the relay is used alone until the flame sensor comes back.
 - Hot water drawn while the relay is on cannot be told apart from heating and is counted as burn.
 - Statistics recorded before the flame sensor was added stay as they were (relay time). Use the `reset_statistics` action for a clean start.
 

@@ -79,6 +79,7 @@ from .const import (
     MODE_FIXED,
     EVENT_SHORT_CYCLE,
     FLAME_INFER_GUARD_S,
+    FLAME_NA_FALLBACK_S,
     FLAME_INFER_RISE,
     FLAME_INFER_S,
     MAX_NA_S_PER_HOUR,
@@ -167,6 +168,7 @@ class BoilerMonitor:
         self._effect_unsub: CALLBACK_TYPE | None = None
         self._infer_unsub: CALLBACK_TYPE | None = None
         self._prev_flow: float | None = None
+        self._flame_na_since: float | None = None
 
         self.cycles: list[dict[str, Any]] = []
         self.hours: dict[int, dict[str, float]] = {}
@@ -530,6 +532,8 @@ class BoilerMonitor:
             _add(self._bucket(now), "na_s", dt)
         if self.season_active and self.demand_on:
             _add(self._bucket(now), "dem_s", dt)
+        if self._flame_na_since is not None and self.burner_available:
+            self._refresh_burner(now)  # fall back to the demand once the grace time is over
         if self.season_active:
             self._sample(now, dt)
             self._check_heatup(now)
@@ -577,7 +581,15 @@ class BoilerMonitor:
             # Flame without demand is domestic hot water: not heating.
             # Flame entity unavailable (cloud outage): fall back to the demand.
             flame = self._flame_on()
-            on = demand and (demand if flame is None else flame)
+            if flame is None:
+                # Unknown flame: no burn at first (the cloud integration is often
+                # still loading after a restart); the demand only after a while.
+                if self._flame_na_since is None:
+                    self._flame_na_since = now
+                flame = now - self._flame_na_since >= FLAME_NA_FALLBACK_S
+            else:
+                self._flame_na_since = None
+            on = demand and flame
         prev = self.burner_on
         self.burner_on = on
         self.demand_on = demand
@@ -735,6 +747,23 @@ class BoilerMonitor:
         if lost:
             seg["partial"] = True
         self._close_heatup(now)
+
+    def _burn_in_demand(self, start: float, end: float) -> tuple[float, int]:
+        """Flame seconds and ignitions inside the heat-demand periods (ignores
+        cycles recorded before a flame entity was set, i.e. relay time)."""
+        segs = [
+            (max(d["start"], start), min(d["end"] if d.get("end") is not None else end, end))
+            for d in self.demands
+        ]
+        segs = [(a, b) for a, b in segs if b > a]
+        secs, starts = 0.0, 0
+        for c in self.cycles:
+            c_end = c["end"] if c.get("end") is not None else end
+            for a, b in segs:
+                secs += max(0.0, min(c_end, b) - max(c["start"], a))
+                if a <= c["start"] < b and not c.get("partial"):
+                    starts += 1
+        return secs, starts
 
     def _demand_seconds(self, start: float, end: float) -> float:
         total = 0.0
@@ -1229,7 +1258,7 @@ class BoilerMonitor:
         reg = self.regression()
         hdd = self.burn_per_hdd(7)
         dem_24 = self._demand_seconds(now - day, now)
-        n_starts = len([c for c in win if not c.get("partial")])
+        flame_24, n_starts = self._burn_in_demand(now - day, now)
 
         return {
             "cycles_today": len(today),
@@ -1259,7 +1288,7 @@ class BoilerMonitor:
             "heating_rate": self.last_heating_rate,
             "balance_point": reg.get("balance_point") if reg else None,
             "demand_hours_today": round(self._demand_seconds(today_start, now) / 3600, 2),
-            "flame_share": _r(min(100.0, 100 * self._burn_seconds(now - day, now) / dem_24))
+            "flame_share": _r(min(100.0, 100 * flame_24 / dem_24))
             if dem_24 >= 600
             else None,
             "starts_per_demand_hour": _r(n_starts / (dem_24 / 3600), 1) if dem_24 >= 1800 else None,

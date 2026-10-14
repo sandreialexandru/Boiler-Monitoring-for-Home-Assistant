@@ -972,3 +972,23 @@ async def test_flame_entity_heatup_spans_the_demand(hass: HomeAssistant, freezer
     assert len(heatups) == 1
     assert heatups[0]["minutes"] == pytest.approx(60, abs=3)
     assert heatups[0]["rate"] == pytest.approx(30, abs=3)
+
+
+async def test_flame_unavailable_at_startup_is_not_a_burn(hass: HomeAssistant, freezer):
+    """After a restart the cloud flame entity loads late: no fake burn from the relay."""
+    freezer.move_to("2026-11-10 08:00:30+02:00")
+    thermostat(hass, target=22.0, current=20.0)
+    temps(hass, flow=30, ret=28)
+    hass.states.async_set(FLAME, "unavailable")
+    await burner(hass, True)
+    await setup(hass, FLAME_DATA, {**OPTIONS, "notify_service": ""})
+    assert st(hass, "sensor.centrala_status").state == "demand"
+    await advance(hass, freezer, 2)
+    await flame(hass, False)  # integration loaded
+    assert st(hass, "sensor.centrala_status").attributes["stats"]["cycles_today"] == 0
+    # A long outage: after 10 min the relay is used alone
+    hass.states.async_set(FLAME, "unavailable")
+    await advance(hass, freezer, 9)
+    assert st(hass, "sensor.centrala_status").state == "demand"
+    await advance(hass, freezer, 2)
+    assert st(hass, "sensor.centrala_status").state == "heating"

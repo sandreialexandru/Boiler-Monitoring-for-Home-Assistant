@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 DOMAIN = "boiler_monitor"
-VERSION = "1.6.0"
+VERSION = "1.6.1"
 
 # Config (entities) — set in config flow
 CONF_NAME = "name"
@@ -61,6 +61,9 @@ MIN_VALID_FLOW_TARGET = 10.0
 FLAME_INFER_RISE = 4.0  # °C between two flow readings
 FLAME_INFER_S = 60  # burn time credited to such an ignition
 FLAME_INFER_GUARD_S = 120  # ignore jumps this soon after a reported flame
+# Flame entity unavailable (cloud integration still loading, outage): count no
+# burn at first, fall back to the demand only after this long.
+FLAME_NA_FALLBACK_S = 600
 
 # Retention
 CYCLE_RETENTION_HOURS = 7 * 24
