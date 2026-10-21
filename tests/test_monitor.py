@@ -157,10 +157,10 @@ async def test_cycles_and_short_cycle(hass: HomeAssistant, freezer):
     await burner(hass, False)
     attrs = st(hass, "sensor.centrala_status").attributes
     s = attrs["stats"]
-    # burns: 20, 10, 5, 6 -> avg 10.25
-    assert s["avg_burn_min"] == pytest.approx(10.2, abs=0.1)
-    # offs: 25, 4, 3 -> avg 10.67
-    assert s["avg_off_min"] == pytest.approx(10.7, abs=0.1)
+    # burns: 20, 10, 5, 6 -> median 8 (one long burn does not dominate)
+    assert s["avg_burn_min"] == pytest.approx(8, abs=0.1)
+    # offs: 25, 4, 3 -> median 4
+    assert s["avg_off_min"] == pytest.approx(4, abs=0.1)
     assert s["burn_hours_today"] == pytest.approx(41 / 60, abs=0.02)
     assert len(attrs["timeline"]) == 4
     assert [x[2] for x in attrs["timeline"]] == [0, 0, 1, 1]
@@ -1011,3 +1011,70 @@ async def test_balance_point_hidden_when_line_is_flat(hass: HomeAssistant, freez
     assert reg is not None and "balance_point" not in reg
     assert reg["balance_reason"] in ("weak_fit", "out_of_range")
     assert st(hass, "sensor.centrala_balance_point").state == "unknown"
+
+
+async def test_late_flame_merges_with_inferred_ignition(hass: HomeAssistant, freezer):
+    """Flow jump first, flame entity 20 s later: one burn, not two, and no short cycle."""
+    freezer.move_to("2026-11-10 08:00:30+02:00")
+    thermostat(hass, target=22.0, current=20.0)
+    temps(hass, flow=30, ret=28)
+    await flame(hass, False)
+    await burner(hass, True)
+    entry = await setup(hass, FLAME_DATA, {**OPTIONS, "notify_service": ""})
+    await advance(hass, freezer, 15)
+    await flow(hass, 42)
+    for _ in range(2):
+        freezer.tick(timedelta(seconds=10))
+        async_fire_time_changed(hass)
+        await hass.async_block_till_done()
+    assert len(entry.runtime_data.cycles) == 1 and entry.runtime_data.cycles[0].get("inferred")
+    await flame(hass, True)
+    await advance(hass, freezer, 3)
+    await flame(hass, False)
+    cycles = entry.runtime_data.cycles
+    assert len(cycles) == 1
+    assert not cycles[0].get("inferred") and not cycles[0]["short"]
+    assert cycles[0]["end"] - cycles[0]["start"] == pytest.approx(60 + 20 + 180, abs=5)
+    s = st(hass, "sensor.centrala_status").attributes["stats"]
+    assert s["cycles_today"] == 1 and s["short_cycles_today"] == 0
+    assert s["burn_hours_today"] * 3600 == pytest.approx(260, abs=40)
+
+
+async def test_units_are_converted(hass: HomeAssistant, freezer):
+    """°F temperatures and kPa pressure are handled as °C and bar."""
+    freezer.move_to("2026-11-10 08:00:30+02:00")
+    data = {**DATA, "pressure_entity": "sensor.presiune", "flow_setpoint_entity": "sensor.cerut"}
+    for eid, val in (("sensor.tur", 140), ("sensor.retur", 104), ("sensor.exterior", 32), ("sensor.cerut", 131),
+                     ("sensor.living", 69.8), ("sensor.dormitor", 69.8)):
+        hass.states.async_set(eid, val, {"device_class": "temperature", "unit_of_measurement": "°F"})
+    hass.states.async_set("sensor.presiune", 150, {"device_class": "pressure", "unit_of_measurement": "kPa"})
+    await burner(hass, False)
+    await setup(hass, data, {**OPTIONS, "notify_service": ""})
+    a = st(hass, "sensor.centrala_status").attributes
+    assert a["flow"] == pytest.approx(60) and a["return"] == pytest.approx(40)
+    assert a["outdoor"] == pytest.approx(0) and a["indoor"] == pytest.approx(21)
+    assert a["flow_target"] == pytest.approx(55) and a["pressure"] == pytest.approx(1.5)
+    assert a["stats"]["delta_t"] == pytest.approx(20, abs=0.1)
+    assert st(hass, "binary_sensor.centrala_pressure_problem").state == "off"
+
+
+async def test_typical_pause_ignores_the_night(hass: HomeAssistant, freezer):
+    """With a flame entity the pause is the median inside the heat demand."""
+    freezer.move_to("2026-11-10 06:00:30+02:00")
+    thermostat(hass, target=22.0, current=20.0)
+    temps(hass, flow=30, ret=28)
+    await flame(hass, False)
+    await burner(hass, False)
+    await setup(hass, FLAME_DATA, {**OPTIONS, "notify_service": ""})
+    for _block in range(2):  # two demand periods, 8 h apart
+        await burner(hass, True)
+        for _ in range(4):
+            await flame(hass, True)
+            await advance(hass, freezer, 3)
+            await flame(hass, False)
+            await advance(hass, freezer, 6)
+        await burner(hass, False)
+        await advance(hass, freezer, 8 * 60)
+    s = st(hass, "sensor.centrala_status").attributes["stats"]
+    assert s["avg_off_min"] == pytest.approx(6, abs=0.2)
+    assert s["avg_burn_min"] == pytest.approx(3, abs=0.2)

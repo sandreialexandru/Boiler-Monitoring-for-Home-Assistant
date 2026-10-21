@@ -152,7 +152,7 @@ class BoilerStatusSensor(BoilerEntity, SensorEntity):
     """Main entity: status + everything the card needs as attributes."""
 
     _unrecorded_attributes = frozenset(
-        {"timeline", "demand_timeline", "daily", "regression", "entities", "stats", "thresholds", "curve_points", "curve_fit", "comfort_points", "comfort", "heatups", "heatup_model"}
+        {"timeline", "demand_timeline", "source_units", "daily", "regression", "entities", "stats", "thresholds", "curve_points", "curve_fit", "comfort_points", "comfort", "heatups", "heatup_model"}
     )
 
     @property
@@ -199,6 +199,11 @@ class BoilerStatusSensor(BoilerEntity, SensorEntity):
                 "pressure": cfg.get(CONF_PRESSURE),
                 "thermostat": cfg.get(CONF_THERMOSTAT),
                 "weather": cfg.get(CONF_WEATHER),
+            },
+            "source_units": {
+                "flow": m.source_unit(CONF_FLOW_TEMP),
+                "return": m.source_unit(CONF_RETURN_TEMP),
+                "setpoint": m.source_unit(CONF_FLOW_SETPOINT),
             },
             "timeline": m.timeline(24),
             "demand_timeline": m.demand_timeline(24) if m.has_flame else [],

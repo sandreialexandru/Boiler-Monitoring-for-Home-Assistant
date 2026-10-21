@@ -13,7 +13,7 @@
  *   show_comfort: true    # comfort vs outdoor + tuning verdict (needs a thermostat)
  *   show_heatup: true     # how fast the house warms up + pre-heat time
  */
-const CARD_VERSION = "1.7.0";
+const CARD_VERSION = "1.8.0";
 
 const I18N = {
   en: {
@@ -28,7 +28,7 @@ const I18N = {
     no_hist: "Loading temperatures…",
     burning_for: "burning for", min: "min", h: "h",
     flow: "Flow", ret: "Return", dt: "ΔT", outdoor: "Outdoor", indoor: "Indoor",
-    cycles_today: "Cycles today", cycles_h: "Cycles / h", avg_burn: "Avg burn", avg_off: "Avg off",
+    cycles_today: "Cycles today", cycles_h: "Cycles / h", avg_burn: "Typical burn", avg_off: "Typical pause",
     duty: "Duty 24h", burn_today: "Burn today", cond: "Condensing", rate: "Heating rate",
     short: "short", last24: "Last 24 hours", days: "Last 14 days", corr: "Burn vs outdoor",
     balance: "Balance point", bp_unreliable: "Balance point: not reliable yet", per_hdd: "min per degree-day", not_enough: "Needs ≥ 3 full days of data",
@@ -79,7 +79,7 @@ comfort_title: "Comfort vs outdoor", heat_title: "Warming up the house",
     no_hist: "Se încarcă temperaturile…",
     burning_for: "arde de", min: "min", h: "h",
     flow: "Tur", ret: "Retur", dt: "ΔT", outdoor: "Exterior", indoor: "Interior",
-    cycles_today: "Cicluri azi", cycles_h: "Cicluri / h", avg_burn: "Ardere medie", avg_off: "Pauză medie",
+    cycles_today: "Cicluri azi", cycles_h: "Cicluri / h", avg_burn: "Ardere tipică", avg_off: "Pauză tipică",
     duty: "Funcționare 24h", burn_today: "Ardere azi", cond: "Condensare", rate: "Rată încălzire",
     short: "scurte", last24: "Ultimele 24 de ore", days: "Ultimele 14 zile", corr: "Ardere vs exterior",
     balance: "Punct de echilibru", bp_unreliable: "Punct de echilibru: încă nesigur", per_hdd: "min pe grad-zi", not_enough: "Necesită ≥ 3 zile complete de date",
@@ -730,15 +730,17 @@ class BoilerMonitorCard extends HTMLElement {
     const now = Date.now();
     if (this._histBusy || (this._hist && this._hist.key === key && now - this._hist.at < 5 * 60000)) return;
     this._histBusy = true;
-    const conv = (res, id) => (id ? (res?.[id] || []) : [])
-      .map((e) => [e.lu ?? e.lc ?? Date.parse(e.last_updated || e.last_changed) / 1000, parseFloat(e.s ?? e.state)])
+    const units = a.source_units || {};
+    const toC = (v, u) => (/F$/i.test(u || "") ? (v - 32) * 5 / 9 : u === "K" ? v - 273.15 : v);
+    const conv = (res, id, u) => (id ? (res?.[id] || []) : [])
+      .map((e) => [e.lu ?? e.lc ?? Date.parse(e.last_updated || e.last_changed) / 1000, toC(parseFloat(e.s ?? e.state), u)])
       .filter((p) => Number.isFinite(p[0]) && Number.isFinite(p[1]));
     this._hass.callWS({
       type: "history/history_during_period",
       start_time: new Date(now - 24 * 3600 * 1000).toISOString(),
       entity_ids: ids, minimal_response: true, no_attributes: true, significant_changes_only: false,
     }).then((res) => {
-      this._hist = { at: now, key, flow: conv(res, src.flow), ret: conv(res, src.return), tgt: conv(res, src.setpoint) };
+      this._hist = { at: now, key, flow: conv(res, src.flow, units.flow), ret: conv(res, src.return, units.return), tgt: conv(res, src.setpoint, units.setpoint) };
     }).catch(() => {
       this._hist = { at: now, key, flow: [], ret: [], tgt: [] };
     }).finally(() => {

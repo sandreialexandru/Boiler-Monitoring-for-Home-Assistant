@@ -171,8 +171,8 @@ All entities belong to one device named after your integration. The examples use
 | `sensor.centrala_cycles_today` | cycles | Burner starts since local midnight |
 | `sensor.centrala_short_cycles_today` | cycles | Of which short cycles |
 | `sensor.centrala_cycles_per_hour_24h` | cycles/h | Rolling 24 h |
-| `sensor.centrala_average_burn_time_24h` | min | Mean burn duration, rolling 24 h |
-| `sensor.centrala_average_off_time_24h` | min | Mean pause before each start, rolling 24 h |
+| `sensor.centrala_average_burn_time_24h` | min | Typical burn duration (median), rolling 24 h |
+| `sensor.centrala_average_off_time_24h` | min | Typical pause before each start (median), rolling 24 h. With a flame sensor only pauses inside a heat demand count, not the night without demand |
 | `sensor.centrala_last_burn_duration` | min | |
 | `sensor.centrala_duty_cycle_24h` | % | Share of the last 24 h with the burner on |
 | `sensor.centrala_burn_time_today` | h | `total_increasing`, so it works with long-term statistics and the statistics-graph card |
@@ -310,8 +310,8 @@ The ranges below are rules of thumb for a gas condensing boiler with radiators. 
 |---|---|---|---|
 | **Cycles today** | burner starts since midnight, with the short ones | few starts, 0 short | many short cycles |
 | **Cycles / h** | starts per hour, averaged over 24 h | ≤ 2–3 | > 4 (turns amber) |
-| **Avg burn** | how long the burner runs each time | ≥ 10–15 min | < 5–7 min |
-| **Avg off** | pause between burns | ≥ 10 min | a few minutes |
+| **Typical burn** | how long the burner runs each time (median) | ≥ 10–15 min | < 5–7 min |
+| **Typical pause** | pause between burns (median; with a flame sensor only while there is heat demand) | ≥ 10 min | a few minutes |
 | **Duty 24h** | share of the last 24 h with the burner on | depends on the weather: 20–40 % in mild weather, 60–90 % in frost | 100 % for days in a row in frost: the boiler barely keeps up |
 | **Burn today** | total burn time since midnight | – | compare with days of similar weather |
 | **Condensing** | share of burn time with the return at or below the threshold | **≥ 80 %** (green) | < 50 % (red): efficiency lost |
@@ -551,6 +551,9 @@ time;event;burn_min;off_min;outdoor;flow;return;indoor_avg;extra
 - **Burn time** is accumulated per hour bucket and split exactly at hour boundaries, so daily totals are correct across midnight.
 - **Condensing ratio.** Once a minute, while burning, the integration checks whether the return is at or below the threshold. Ratio = condensing minutes ÷ sampled burning minutes over the last 24 h. Each minute is judged against the threshold set at that moment, so after you change the threshold the ratio needs up to 24 h to catch up (or run `boiler_monitor.reset_statistics`). The sensor's attributes show the threshold in use, the minutes counted and the highest return seen while burning.
 - **Heating effect.** At burner start it stores the average of the indoor sensors. After the delay it computes rise and rate (°C/h). If the burner cycles faster than the delay, the pending check is **kept**, not restarted, so it measures the whole heating period. *Heating ineffective* is raised only if the burner ran at least half of that period and the rooms are still below the thermostat target (when a thermostat is set). A short burn in mild weather is not judged. The alert clears by itself once the burner has been off for a whole check period.
+- **Units.** Temperatures in °F or K and pressures in mbar, kPa, Pa or psi are converted to °C and bar using the entity's unit, so the thresholds in the options are always °C and bar. Climate attributes follow the unit system of Home Assistant.
+- **Typical burn and pause** are medians, so one long burn or the pause over night does not hide short cycling.
+- **Saving.** Statistics are kept in `.storage/boiler_monitor.<entry_id>` and written every 10 minutes and when Home Assistant stops (not every minute, to spare SD cards). A crash can lose at most the last 10 minutes.
 - **Regression / balance point.** For each *complete* past day (≥ 20 h of samples) it computes `burn_hours = a + b · outdoor_avg` by least squares. Balance point = −a / b, the outdoor temperature at which predicted burn time is zero. It is shown only when the line can support it: at least 4 complete days, at least 3 of them with ≥ 15 min of burn, a falling line with R² ≥ 0.3, and a result between 0 and 25 °C. Otherwise the sensor is `unknown`, the card says *not reliable yet* and `regression.balance_reason` tells why (`few_days`, `weak_fit`, `out_of_range`). A nearly flat line, e.g. on mild days or while the neighbours' heating is still off, would otherwise cross zero at absurd values such as 258 °C.
 - **Burn per degree-day** = Σ burn hours ÷ Σ max(0, 18 °C − outdoor_avg) over the last 7 complete days.
 - **Flow vs target.** Every minute while burning, after the first 5 minutes of the burn: actual flow − target. In fixed mode, changes of the fixed setpoint are written to the CSV (`SETPOINT`), and every switch of the regulation mode too (`MODE`).

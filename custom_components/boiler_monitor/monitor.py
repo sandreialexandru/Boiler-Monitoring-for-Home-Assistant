@@ -11,10 +11,11 @@ from datetime import datetime, timedelta
 import logging
 import math
 import os
+from statistics import median
 from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import STATE_UNAVAILABLE, STATE_UNKNOWN
+from homeassistant.const import STATE_UNAVAILABLE, STATE_UNKNOWN, UnitOfTemperature
 from homeassistant.core import CALLBACK_TYPE, Event, HomeAssistant, State, callback
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.event import (
@@ -107,6 +108,7 @@ BP_MIN_BURN_H = 0.25
 BP_MIN_R2 = 0.3
 BP_RANGE = (0.0, 25.0)  # °C; anything outside is an artefact of a flat line
 ALERT_THROTTLE_S = 3600
+SAVE_DELAY_S = 600
 BAD_STATES = (STATE_UNAVAILABLE, STATE_UNKNOWN, None, "", "none")
 
 
@@ -119,6 +121,38 @@ def _f(value: Any) -> float | None:
     except (TypeError, ValueError):
         return None
     return v if math.isfinite(v) else None
+
+
+# Everything inside is °C and bar; sources in other units are converted.
+_PRESSURE_TO_BAR = {"bar": 1.0, "mbar": 0.001, "kpa": 0.01, "pa": 1e-5, "hpa": 0.001, "mpa": 10.0, "psi": 0.0689476}
+
+
+def _to_celsius(v: float | None, unit: str | None) -> float | None:
+    if v is None or not unit:
+        return v
+    u = unit.strip().upper().replace("º", "°")
+    if u in ("°F", "F"):
+        return (v - 32) * 5 / 9
+    if u in ("K",):
+        return v - 273.15
+    return v
+
+
+def _to_bar(v: float | None, unit: str | None) -> float | None:
+    if v is None or not unit:
+        return v
+    return v * _PRESSURE_TO_BAR.get(unit.strip().lower(), 1.0)
+
+
+def _compact(obj: Any) -> Any:
+    """Smaller store file: floats rounded, zero counters left out (restored on load)."""
+    if isinstance(obj, dict):
+        return {k: _compact(v) for k, v in obj.items() if not (isinstance(v, (int, float)) and not isinstance(v, bool) and v == 0)}
+    if isinstance(obj, list):
+        return [_compact(v) for v in obj]
+    if isinstance(obj, float):
+        return round(obj, 2)
+    return obj
 
 
 def _r(value: float | None, nd: int = 1) -> float | None:
@@ -238,7 +272,7 @@ class BoilerMonitor:
     async def async_start(self) -> None:
         data = await self._store.async_load() or {}
         self.cycles = data.get("cycles", [])
-        self.hours = {int(k): v for k, v in data.get("hours", {}).items()}
+        self.hours = {int(k): {**_new_bucket(), **v} for k, v in data.get("hours", {}).items()}
         self.last_alert = data.get("last_alert", {})
         self.heatups = data.get("heatups", [])
         self.demands = data.get("demands", [])
@@ -317,8 +351,8 @@ class BoilerMonitor:
 
     def _data_to_save(self) -> dict[str, Any]:
         return {
-            "cycles": self.cycles,
-            "hours": {str(k): v for k, v in self.hours.items()},
+            "cycles": [_compact(c) for c in self.cycles],
+            "hours": {str(k): _compact(v) for k, v in self.hours.items()},
             "last_alert": self.last_alert,
             "heatups": self.heatups,
             "demands": self.demands,
@@ -326,7 +360,10 @@ class BoilerMonitor:
         }
 
     def _save(self) -> None:
-        self._store.async_delay_save(self._data_to_save, 30)
+        # The store holds weeks of hourly data (~0.5 MB): writing it every
+        # minute wears SD cards. Every 10 min is enough; it is also written
+        # when Home Assistant stops, and a crash loses at most 10 min.
+        self._store.async_delay_save(self._data_to_save, SAVE_DELAY_S)
 
     async def async_reset(self) -> None:
         self.cycles = [c for c in self.cycles if c.get("end") is None]
@@ -347,11 +384,32 @@ class BoilerMonitor:
         st = self.hass.states.get(entity_id)
         return _f(st.state) if st else None
 
+    def _temp_val(self, entity_id: str | None) -> float | None:
+        """A temperature sensor in °C, whatever unit it reports."""
+        if not entity_id:
+            return None
+        st = self.hass.states.get(entity_id)
+        if st is None:
+            return None
+        return _to_celsius(_f(st.state), st.attributes.get("unit_of_measurement"))
+
+    def _ha_temp(self, value: Any) -> float | None:
+        """A climate attribute (HA's own unit) in °C."""
+        v = _f(value)
+        if v is not None and self.hass.config.units.temperature_unit == UnitOfTemperature.FAHRENHEIT:
+            v = (v - 32) * 5 / 9
+        return v
+
+    def source_unit(self, key: str) -> str | None:
+        ent = self.cfg.get(key)
+        st = self.hass.states.get(ent) if ent else None
+        return st.attributes.get("unit_of_measurement") if st else None
+
     def flow_temp(self) -> float | None:
-        return self._state_val(self.cfg.get(CONF_FLOW_TEMP))
+        return self._temp_val(self.cfg.get(CONF_FLOW_TEMP))
 
     def return_temp(self) -> float | None:
-        return self._state_val(self.cfg.get(CONF_RETURN_TEMP))
+        return self._temp_val(self.cfg.get(CONF_RETURN_TEMP))
 
     @property
     def has_outdoor(self) -> bool:
@@ -364,7 +422,7 @@ class BoilerMonitor:
 
     def outdoor_temp(self) -> float | None:
         if self.cfg.get(CONF_OUTDOOR_TEMP):
-            return self._state_val(self.cfg[CONF_OUTDOOR_TEMP])
+            return self._temp_val(self.cfg[CONF_OUTDOOR_TEMP])
         ent = self.cfg.get(CONF_WEATHER)
         st = self.hass.states.get(ent) if ent else None
         if st is None or st.state in BAD_STATES:
@@ -377,16 +435,20 @@ class BoilerMonitor:
     def indoor_avg(self) -> float | None:
         vals = [
             v
-            for v in (self._state_val(e) for e in self.cfg.get(CONF_INDOOR_TEMPS) or [])
+            for v in (self._temp_val(e) for e in self.cfg.get(CONF_INDOOR_TEMPS) or [])
             if v is not None
         ]
         return sum(vals) / len(vals) if vals else None
 
     def flow_target(self) -> float | None:
-        return self._state_val(self.cfg.get(CONF_FLOW_SETPOINT))
+        return self._temp_val(self.cfg.get(CONF_FLOW_SETPOINT))
 
     def pressure(self) -> float | None:
-        return self._state_val(self.cfg.get(CONF_PRESSURE))
+        ent = self.cfg.get(CONF_PRESSURE)
+        st = self.hass.states.get(ent) if ent else None
+        if st is None:
+            return None
+        return _to_bar(_f(st.state), st.attributes.get("unit_of_measurement"))
 
     @property
     def regulation_mode(self) -> str | None:
@@ -411,7 +473,7 @@ class BoilerMonitor:
         st = self._thermostat()
         if st is None or st.state == "off":
             return None
-        return _f(st.attributes.get("temperature"))
+        return self._ha_temp(st.attributes.get("temperature"))
 
     def room_temp(self) -> float | None:
         """Indoor average, or the thermostat's own reading when no indoor sensors are set."""
@@ -419,7 +481,7 @@ class BoilerMonitor:
         if v is not None:
             return v
         st = self._thermostat()
-        return _f(st.attributes.get("current_temperature")) if st else None
+        return self._ha_temp(st.attributes.get("current_temperature")) if st else None
 
     def delta_t(self) -> float | None:
         f, r = self.flow_temp(), self.return_temp()
@@ -608,8 +670,34 @@ class BoilerMonitor:
         elif not on and self._open_cycle() is not None and (prev or initial):
             self._stop_cycle(now)
 
+    def _drop_cycle(self, cycle: dict[str, Any]) -> None:
+        """Remove a closed cycle and everything it added to the hourly buckets."""
+        self.cycles.remove(cycle)
+        b = self._bucket(cycle["start"])
+        b["cycles"] = max(0, b["cycles"] - 1)
+        if cycle.get("short"):
+            b["short"] = max(0, b["short"] - 1)
+        t, end = cycle["start"], cycle["end"]
+        while t < end:
+            nxt = min(end, _hour_key(t) + 3600)
+            bb = self._bucket(t)
+            bb["burn_s"] = max(0.0, bb["burn_s"] - (nxt - t))
+            t = nxt
+
     def _start_cycle(self, now: float, partial: bool = False, inferred: bool = False) -> None:
         last = self._last_closed_cycle()
+        if (
+            not inferred
+            and not partial
+            and last is not None
+            and last.get("inferred")
+            and now - last["end"] < FLAME_INFER_GUARD_S
+        ):
+            # The flame entity reports, late, the ignition already seen from
+            # the flow jump: one burn, not two (and not a short cycle).
+            self._drop_cycle(last)
+            now = last["start"]
+            last = self._last_closed_cycle()
         # Off-time is measured from the *recorded* stop of the previous cycle
         # (persisted), never from last_changed, so a restart cannot fake a
         # short cycle. A cycle whose real start/stop was not observed
@@ -770,6 +858,10 @@ class BoilerMonitor:
                 if a <= c["start"] < b and not c.get("partial"):
                     starts += 1
         return secs, starts
+
+    def _in_one_demand(self, start: float, end: float) -> bool:
+        now = dt_util.utcnow().timestamp()
+        return any(d["start"] <= start and end <= (d["end"] if d.get("end") is not None else now) for d in self.demands)
 
     def _demand_seconds(self, start: float, end: float) -> float:
         total = 0.0
@@ -1249,6 +1341,10 @@ class BoilerMonitor:
         closed = [c for c in win if c.get("end") is not None]
         burns = [c["end"] - c["start"] for c in closed if not c.get("partial")]
         offs = [c["off_s"] for c in win if c.get("off_s") is not None]
+        if self.has_flame and self.demands:
+            # Pauses the boiler makes while the thermostat still asks for heat;
+            # the night without demand is not a pause between burns.
+            offs = [c["off_s"] for c in win if c.get("off_s") is not None and self._in_one_demand(c["start"] - c["off_s"], c["start"])]
 
         h_start = _hour_key(now) - 23 * 3600
         burn_24 = self._sum_hours(h_start, now + 1, "burn_s")
@@ -1271,8 +1367,9 @@ class BoilerMonitor:
             "short_cycles_today": sum(1 for c in today if c.get("short")),
             "cycles_24h": len(win),
             "cycles_per_hour": _r(len(win) / max(min(span, day) / 3600, 1), 2),
-            "avg_burn_min": _r(sum(burns) / len(burns) / 60) if burns else None,
-            "avg_off_min": _r(sum(offs) / len(offs) / 60) if offs else None,
+            # medians: one long burn or the pause over night must not dominate
+            "avg_burn_min": _r(median(burns) / 60) if burns else None,
+            "avg_off_min": _r(median(offs) / 60) if offs else None,
             "duty_cycle": _r(100 * burn_24 / max(min(span, day), 60)),
             "burn_hours_today": round(
                 self._sum_hours(_hour_key(today_start), now + 1, "burn_s") / 3600, 2
