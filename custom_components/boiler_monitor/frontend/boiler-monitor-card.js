@@ -13,13 +13,19 @@
  *   show_comfort: true    # comfort vs outdoor + tuning verdict (needs a thermostat)
  *   show_heatup: true     # how fast the house warms up + pre-heat time
  */
-const CARD_VERSION = "1.6.2";
+const CARD_VERSION = "1.7.0";
 
 const I18N = {
   en: {
     heating: "Heating", idle: "Idle", off_season: "Off season", unavailable: "Unavailable", demand: "Demand, flame off",
     demand_today: "Demand today", flame_share: "Flame / demand", starts_dh: "Ignitions / demand h",
     tt_demand: "Heat demand", tt_inferred: "seen from the flow jump (flame sensor missed it)", tt_flame: "Flame",
+    tab_now: "Now", tab_history: "History", tab_curve: "Curve", tab_comfort: "Comfort",
+    h_cond: "Condensing", h_cycle: "Ignitions", h_press: "Pressure", h_comfort: "Comfort",
+    g_burns: "Burns · 24 h", g_time: "Today", g_eff: "Efficiency",
+    l_flow: "flow", l_ret: "return", l_tgt: "target", l_flame: "flame", l_dem: "demand",
+    st_label: "Status", st_burn: "burning", st_dem: "demand, flame off", st_idle: "off", tl_hint: "Drag to zoom · double-tap to zoom in · tap for values",
+    no_hist: "Loading temperatures…",
     burning_for: "burning for", min: "min", h: "h",
     flow: "Flow", ret: "Return", dt: "ΔT", outdoor: "Outdoor", indoor: "Indoor",
     cycles_today: "Cycles today", cycles_h: "Cycles / h", avg_burn: "Avg burn", avg_off: "Avg off",
@@ -65,6 +71,12 @@ comfort_title: "Comfort vs outdoor", heat_title: "Warming up the house",
     heating: "Încălzește", idle: "În așteptare", off_season: "În afara sezonului", unavailable: "Indisponibil", demand: "Cerere, flacără stinsă",
     demand_today: "Cerere azi", flame_share: "Flacără / cerere", starts_dh: "Aprinderi / h cerere",
     tt_demand: "Cerere de căldură", tt_inferred: "văzută din saltul turului (senzorul de flacără a ratat-o)", tt_flame: "Flacără",
+    tab_now: "Acum", tab_history: "Istoric", tab_curve: "Curbă", tab_comfort: "Confort",
+    h_cond: "Condensare", h_cycle: "Aprinderi", h_press: "Presiune", h_comfort: "Confort",
+    g_burns: "Arderi · 24 h", g_time: "Azi", g_eff: "Eficiență",
+    l_flow: "tur", l_ret: "retur", l_tgt: "tur cerut", l_flame: "flacără", l_dem: "cerere",
+    st_label: "Stare", st_burn: "arde", st_dem: "cerere, flacără stinsă", st_idle: "oprită", tl_hint: "Trage pentru zoom · dublu-tap pentru mărire · tap pentru valori",
+    no_hist: "Se încarcă temperaturile…",
     burning_for: "arde de", min: "min", h: "h",
     flow: "Tur", ret: "Retur", dt: "ΔT", outdoor: "Exterior", indoor: "Interior",
     cycles_today: "Cicluri azi", cycles_h: "Cicluri / h", avg_burn: "Ardere medie", avg_off: "Pauză medie",
@@ -153,6 +165,7 @@ class BoilerMonitorCard extends HTMLElement {
       schema: [
         { name: "entity", required: true, selector: { entity: { domain: "sensor", integration: "boiler_monitor" } } },
         { name: "title", selector: { text: {} } },
+        { name: "tabs", selector: { boolean: {} } },
         {
           name: "mode",
           selector: { select: { mode: "dropdown", options: [
@@ -181,7 +194,7 @@ class BoilerMonitorCard extends HTMLElement {
 
   setConfig(config) {
     if (!config) throw new Error("Invalid configuration");
-    this._config = { mode: "full", show_timeline: true, show_daily: true, show_correlation: true, show_curve: true, show_comfort: true, show_heatup: true, ...config };
+    this._config = { mode: "full", tabs: true, show_timeline: true, show_daily: true, show_correlation: true, show_curve: true, show_comfort: true, show_heatup: true, ...config };
     if (!this.shadowRoot) this.attachShadow({ mode: "open" });
     this._lastState = undefined;
     if (this._hass) this._render();
@@ -259,7 +272,7 @@ class BoilerMonitorCard extends HTMLElement {
     const tip = this.shadowRoot?.querySelector(".tip");
     if (tip) tip.style.display = "none";
     this._pinned = null;
-    this.shadowRoot?.querySelectorAll(".hl").forEach((h) => h.setAttribute("visibility", "hidden"));
+    this.shadowRoot?.querySelectorAll(".hl, .cur").forEach((h) => h.setAttribute("visibility", "hidden"));
   }
 
   // Hover (mouse) or tap (touch) on elements with data-tip (bars, timeline).
@@ -303,6 +316,7 @@ class BoilerMonitorCard extends HTMLElement {
       return [s0, s0 + w];
     };
     const [x0, x1] = clamp(full.x0, full.x1, z.x0, z.x1);
+    if (this._plots[id].xOnly) return { x0, x1, y0: full.y0, y1: full.y1 };
     const [y0, y1] = clamp(full.y0, full.y1, z.y0, z.y1);
     return { x0, x1, y0, y1 };
   }
@@ -310,13 +324,17 @@ class BoilerMonitorCard extends HTMLElement {
   _plotInner(id) {
     const t = this._t;
     const cfg = this._plots[id];
-    const W = 320, H = cfg.H || 160, P = { l: 32, r: 10, t: 10, b: 22 };
+    const W = 320, H = cfg.H || 160, P = { l: 32, r: 10, t: 10, b: 22, ...(cfg.pad || {}) };
     const d = this._plotDomain(id);
     const X = (v) => P.l + ((v - d.x0) / (d.x1 - d.x0)) * (W - P.l - P.r);
     const Y = (v) => H - P.b - ((v - d.y0) / (d.y1 - d.y0)) * (H - P.t - P.b);
     const xt = niceTicks(d.x0, d.x1, 6), yt = niceTicks(d.y0, d.y1, 4);
     let axes = `<line x1="${P.l}" x2="${W - P.r}" y1="${H - P.b}" y2="${H - P.b}" class="ax"/>`;
-    xt.ticks.forEach((x) => { axes += `<text x="${X(x)}" y="${H - 6}" class="axl" text-anchor="middle">${cfg.xFmt(tickFmt(x, xt.step))}</text>`; });
+    const xlist = cfg.xTicks ? cfg.xTicks(d) : xt.ticks.map((x) => [x, cfg.xFmt(tickFmt(x, xt.step))]);
+    xlist.forEach(([x, lab]) => {
+      axes += `<text x="${X(x)}" y="${H - 6}" class="axl" text-anchor="middle">${lab}</text>`;
+      if (cfg.xGrid) axes += `<line x1="${X(x)}" x2="${X(x)}" y1="${P.t}" y2="${H - P.b}" class="grd"/>`;
+    });
     yt.ticks.forEach((y) => { axes += `<text x="${P.l - 5}" y="${Y(y) + 3}" class="axl" text-anchor="end">${cfg.yFmt(tickFmt(y, yt.step))}</text><line x1="${P.l}" x2="${W - P.r}" y1="${Y(y)}" y2="${Y(y)}" class="grd"/>`; });
     const r = this._zoom[id] ? 3.6 : 3; // a bit larger when zoomed in
     const dots = cfg.points.map((p) => p.y == null ? "" :
@@ -327,7 +345,8 @@ class BoilerMonitorCard extends HTMLElement {
         <defs><clipPath id="clip-${id}"><rect x="${P.l}" y="${P.t - 4}" width="${W - P.l - P.r}" height="${H - P.t - P.b + 4}"/></clipPath></defs>
         ${axes}
         <g clip-path="url(#clip-${id})">${cfg.layers ? cfg.layers(X, Y, d) : ""}${dots}
-          <circle class="hl" r="7" visibility="hidden"/></g>
+          <circle class="hl" r="7" visibility="hidden"/>
+          <line class="cur" y1="${P.t}" y2="${H - P.b}" visibility="hidden"/></g>
         <rect class="sel" visibility="hidden"/>
       </svg>
       <div class="zbtns">
@@ -346,8 +365,10 @@ class BoilerMonitorCard extends HTMLElement {
   }
 
   _setZoom(id, dom) {
-    const { full } = this._plots[id];
-    const minW = (full.x1 - full.x0) / 25, minH = (full.y1 - full.y0) / 25;
+    const cfg = this._plots[id];
+    const { full } = cfg;
+    if (cfg.xOnly) dom = { ...dom, y0: full.y0, y1: full.y1 };
+    const minW = cfg.minW ?? (full.x1 - full.x0) / 25, minH = (full.y1 - full.y0) / 25;
     const cx = (dom.x0 + dom.x1) / 2, cy = (dom.y0 + dom.y1) / 2;
     const w = Math.max(dom.x1 - dom.x0, minW), h = Math.max(dom.y1 - dom.y0, minH);
     const nd = { x0: cx - w / 2, x1: cx + w / 2, y0: cy - h / 2, y1: cy + h / 2 };
@@ -402,6 +423,20 @@ class BoilerMonitorCard extends HTMLElement {
     // All points near the pointer, so overlapping points are listed together
     const showNear = (ev, pin) => {
       const { sx, sy, k } = toSvg(ev);
+      if (cfg().hover) {
+        const { W, H, P, d } = geo();
+        const x = toData(sx, sy).x;
+        const html = x >= d.x0 && x <= d.x1 ? cfg().hover(x) : null;
+        if (!html) { if (pin || !this._pinned) this._hideTip(); return; }
+        const cur = svg().querySelector(".cur");
+        cur.setAttribute("x1", sX(x)); cur.setAttribute("x2", sX(x));
+        cur.setAttribute("visibility", "visible");
+        const r = svg().getBoundingClientRect();
+        const ax = r.left + (sX(x) / W) * r.width, ay = r.top + (P.t / H) * r.height;
+        this._showTip(html, ax, { left: ax, width: 0, top: ay, bottom: r.top + ((H - P.b) / H) * r.height });
+        if (pin) this._pinned = el;
+        return;
+      }
       const R = 9 * k;
       const hits = cfg().points
         .filter((p) => p.y != null && p.tip)
@@ -459,8 +494,10 @@ class BoilerMonitorCard extends HTMLElement {
           y0: m.y - (m.y - d0.y0) / f, y1: m.y + (d0.y1 - m.y) / f }));
       } else if (start.type === "mouse") {
         const sel = svg().querySelector(".sel");
-        sel.setAttribute("x", Math.min(start.sx, p.sx)); sel.setAttribute("y", Math.min(start.sy, p.sy));
-        sel.setAttribute("width", Math.abs(p.sx - start.sx)); sel.setAttribute("height", Math.abs(p.sy - start.sy));
+        const xo = cfg().xOnly, { H, P } = geo();
+        sel.setAttribute("x", Math.min(start.sx, p.sx)); sel.setAttribute("width", Math.abs(p.sx - start.sx));
+        sel.setAttribute("y", xo ? P.t : Math.min(start.sy, p.sy));
+        sel.setAttribute("height", xo ? H - P.t - P.b : Math.abs(p.sy - start.sy));
         sel.setAttribute("visibility", "visible");
         this._hideTip();
       } else if (this._zoom[id] && ptrs.size === 1) {
@@ -479,7 +516,7 @@ class BoilerMonitorCard extends HTMLElement {
       const p = toSvg(ev);
       if (moved && start.type === "mouse") {
         svg().querySelector(".sel").setAttribute("visibility", "hidden");
-        if (Math.abs(p.sx - start.sx) > 8 * p.k && Math.abs(p.sy - start.sy) > 8 * p.k) {
+        if (Math.abs(p.sx - start.sx) > 8 * p.k && (cfg().xOnly || Math.abs(p.sy - start.sy) > 8 * p.k)) {
           const a = toData(start.sx, start.sy), b = toData(p.sx, p.sy);
           this._setZoom(id, { x0: Math.min(a.x, b.x), x1: Math.max(a.x, b.x), y0: Math.min(a.y, b.y), y1: Math.max(a.y, b.y) });
         }
@@ -570,52 +607,18 @@ class BoilerMonitorCard extends HTMLElement {
         </div>
         ${this._timeline(a, true)}`;
     } else {
-      const temps = [
-        a.sources?.flow && { k: a.sources.flow, l: t.flow, v: a.flow, u: "°C" },
-        a.sources?.setpoint && { k: a.sources.setpoint, v: a.flow_target, u: "°C",
-          l: t.target, sub: a.regulation_mode ? (a.regulation_mode === "fixed" ? t.m_fixed : t.m_curve) : "" },
-        a.sources?.return && { k: a.sources.return, l: t.ret, v: a.return, u: "°C",
-          cls: a.return != null && a.return > a.thresholds?.return ? "bad" : "good" },
-        a.sources?.flow && a.sources?.return && { k: a.entities?.delta_t, l: t.dt, v: s.delta_t, u: "°C" },
-        a.sources?.outdoor && { k: a.sources.outdoor, l: t.outdoor, v: a.outdoor, u: "°C" },
-        a.indoor != null && { k: "", l: t.indoor, v: a.indoor, u: "°C" },
-        a.sources?.pressure && { k: a.sources.pressure, v: a.pressure, u: "bar", d: 2,
-          l: s.pressure_change_7d != null && Math.abs(s.pressure_change_7d) >= 0.1
-            ? `${t.pressure} ${s.pressure_change_7d < 0 ? "↓" : "↑"}${fmt(Math.abs(s.pressure_change_7d), 1)}` : t.pressure,
-          cls: a.pressure != null && (a.pressure < a.thresholds?.pressure_min || a.pressure > a.thresholds?.pressure_max) ? "bad" : "" },
-      ].filter(Boolean);
-
-      const tiles = [
-        ["cycles_today", t.cycles_today, fmt(s.cycles_today, 0), s.short_cycles_today ? `${s.short_cycles_today} ${t.short}` : "", s.short_cycles_today ? "warn" : ""],
-        ["cycles_per_hour", t.cycles_h, fmt(s.cycles_per_hour, 2), "", (s.cycles_per_hour ?? 0) > 3 ? "warn" : ""],
-        ["avg_burn", t.avg_burn, ...durTile(s.avg_burn_min), ""],
-        ["avg_off", t.avg_off, ...durTile(s.avg_off_min), ""],
-        ["duty_cycle", t.duty, fmt(s.duty_cycle, 0), "%", ""],
-        ["burn_time_today", t.burn_today, ...durTile(s.burn_hours_today == null ? null : s.burn_hours_today * 60), ""],
-        a.sources?.flame && ["demand_time_today", t.demand_today, ...durTile(s.demand_hours_today == null ? null : s.demand_hours_today * 60), ""],
-        a.sources?.flame && ["flame_share", t.flame_share, fmt(s.flame_share, 0), "%", ""],
-        a.sources?.flame && ["starts_per_demand_hour", t.starts_dh, fmt(s.starts_per_demand_hour, 1), "", (s.starts_per_demand_hour ?? 0) > 4 ? "warn" : ""],
-        a.sources?.return && ["condensing_ratio", t.cond, fmt(s.condensing_ratio, 0), "%", this._condCls(s.condensing_ratio)],
-        a.entities?.heating_rate && ["heating_rate", t.rate, fmt(s.heating_rate, 2), "°C/h", (s.heating_rate ?? 1) <= 0 ? "warn" : ""],
-      ].filter(Boolean);
-
-      body = `
-        ${temps.length ? `<div class="temps ${temps.length > 5 ? "many" : ""}">${temps.map((x) => `
-          <div class="temp ${x.cls || ""}" data-ent="${esc(x.k || "")}"><span>${esc(x.l)}</span><b>${fmt(x.v, x.d ?? 1)}<small>${x.u}</small></b>${x.sub ? `<em>${esc(x.sub)}</em>` : ""}</div>`).join("")}</div>` : ""}
-        <div class="grid">${tiles.map(([k, l, v, u, cls]) => `
-          <div class="tile ${cls}" data-ent="${esc(a.entities?.[k] || "")}">
-            <div class="tv">${v}<small>${esc(u)}</small></div><div class="tl">${esc(l)}</div>
-          </div>`).join("")}</div>
-        ${this._config.show_timeline ? `<div class="sec">${esc(t.last24)}</div>${this._timeline(a, false)}` : ""}
-        ${this._config.show_daily ? this._daily(a) : ""}
-        ${this._config.show_curve && a.sources?.setpoint && a.sources?.outdoor ? this._curve(a) : ""}
-        ${this._config.show_comfort && a.sources?.thermostat && a.sources?.outdoor ? this._comfort(a) : ""}
-        ${this._config.show_heatup && (a.sources?.thermostat || a.room != null) ? this._heatup(a) : ""}
-        ${this._config.show_correlation && a.sources?.outdoor ? this._corr(a) : ""}`;
+      body = this._fullBody(a, s, t);
     }
 
     this.shadowRoot.innerHTML = `<style>${STYLE}</style>
       <ha-card class="${compact ? "compact" : ""}"><div class="wrap">${header}${body}</div><div class="tip" role="tooltip"></div></ha-card>`;
+    this.shadowRoot.querySelectorAll("[data-tab]").forEach((b) => b.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      this._tab = b.getAttribute("data-tab");
+      try { localStorage.setItem(`bm-tab-${this._config.entity}`, this._tab); } catch (e) { /* storage blocked */ }
+      this._hideTip();
+      this._render();
+    }));
     this.shadowRoot.querySelectorAll("[data-ent]").forEach((el) => {
       const id = el.getAttribute("data-ent");
       if (!id) return;
@@ -623,6 +626,204 @@ class BoilerMonitorCard extends HTMLElement {
       el.addEventListener("click", () => this._moreInfo(id));
     });
     this._wireTips();
+  }
+
+
+  // Full card: tabs (or everything stacked with tabs: false)
+  _fullBody(a, s, t) {
+    const cfg = this._config;
+    const sections = [
+      { id: "now", label: t.tab_now, html: this._nowTab(a, s, t) },
+      { id: "history", label: t.tab_history, html: [
+        cfg.show_daily ? this._daily(a) : "",
+        cfg.show_correlation && a.sources?.outdoor ? this._corr(a) : "",
+      ].join("") },
+      { id: "curve", label: t.tab_curve, html: cfg.show_curve && a.sources?.setpoint && a.sources?.outdoor ? this._curve(a) : "" },
+      { id: "comfort", label: t.tab_comfort, html: [
+        cfg.show_comfort && a.sources?.thermostat && a.sources?.outdoor ? this._comfort(a) : "",
+        cfg.show_heatup && (a.sources?.thermostat || a.room != null) ? this._heatup(a) : "",
+      ].join("") },
+    ].filter((x) => x.html);
+    if (cfg.tabs === false) return sections.map((x) => `<div class="pane">${x.html}</div>`).join("");
+    let cur = this._tab;
+    if (!cur) { try { cur = localStorage.getItem(`bm-tab-${cfg.entity}`); } catch (e) { cur = null; } }
+    if (!sections.some((x) => x.id === cur)) cur = sections[0].id;
+    this._tab = cur;
+    const bar = `<div class="tabs" role="tablist">${sections.map((x) => `
+      <button class="tab ${x.id === cur ? "on" : ""}" data-tab="${x.id}" role="tab" aria-selected="${x.id === cur}">${esc(x.label)}</button>`).join("")}</div>`;
+    return `${bar}<div class="pane">${sections.find((x) => x.id === cur).html}</div>`;
+  }
+
+  _nowTab(a, s, t) {
+    const fl = this._hasFlame;
+    // health summary
+    const pills = [];
+    if (a.sources?.return) {
+      const v = s.condensing_ratio;
+      pills.push({ ent: a.entities?.condensing_ratio, icon: "mdi:water-percent", l: t.h_cond, v: v == null ? "–" : `${fmt(v, 0)} %`,
+        cls: a.condensation_lost ? "bad" : v == null ? "none" : v >= 80 ? "good" : v >= 50 ? "warn" : "bad" });
+    }
+    const cyc = fl ? s.starts_per_demand_hour : s.cycles_per_hour;
+    pills.push({ ent: a.entities?.[fl ? "starts_per_demand_hour" : "cycles_per_hour"], icon: "mdi:repeat", l: t.h_cycle,
+      v: cyc == null ? "–" : `${fmt(cyc, 1)}/h`,
+      cls: a.short_cycling ? "bad" : cyc == null ? "none" : cyc <= 3 ? "good" : cyc <= 5 ? "warn" : "bad" });
+    if (a.sources?.pressure) {
+      const p = a.pressure, th = a.thresholds || {};
+      const out = p != null && (p < th.pressure_min || p > th.pressure_max);
+      pills.push({ ent: a.sources.pressure, icon: "mdi:gauge", l: t.h_press, v: p == null ? "–" : `${fmt(p, 1)} bar`,
+        cls: a.pressure_problem || out ? "bad" : p == null ? "none" : "good" });
+    }
+    if (a.sources?.thermostat) {
+      const v = s.comfort_verdict;
+      const known = v && v !== "insufficient_data";
+      pills.push({ ent: a.entities?.comfort_verdict, icon: "mdi:home-thermometer", l: t.h_comfort,
+        v: v === "ok" ? "OK" : known ? (t[`v_${v}`] || v) : "…", cls: v === "ok" ? "good" : known ? "warn" : "none" });
+    }
+    const health = `<div class="pills">${pills.map((x) => `
+      <div class="pill ${x.cls}" data-ent="${esc(x.ent || "")}"><ha-icon icon="${x.icon}"></ha-icon><span>${esc(x.l)}</span><b>${esc(x.v)}</b></div>`).join("")}</div>`;
+
+    // live temperatures
+    const temps = [
+      a.sources?.flow && { k: a.sources.flow, l: t.flow, v: a.flow, u: "°C" },
+      a.sources?.setpoint && { k: a.sources.setpoint, v: a.flow_target, u: "°C",
+        l: t.target, sub: a.regulation_mode ? (a.regulation_mode === "fixed" ? t.m_fixed : t.m_curve) : "" },
+      a.sources?.return && { k: a.sources.return, l: t.ret, v: a.return, u: "°C",
+        cls: a.return != null && a.return > a.thresholds?.return ? "bad" : "good" },
+      a.sources?.flow && a.sources?.return && { k: a.entities?.delta_t, l: t.dt, v: s.delta_t, u: "°C" },
+      a.sources?.outdoor && { k: a.sources.outdoor, l: t.outdoor, v: a.outdoor, u: "°C" },
+      a.indoor != null && { k: "", l: t.indoor, v: a.indoor, u: "°C" },
+    ].filter(Boolean);
+    const tempsHtml = temps.length ? `<div class="temps">${temps.map((x) => `
+      <div class="temp ${x.cls || ""}" data-ent="${esc(x.k || "")}"><span>${esc(x.l)}</span><b>${fmt(x.v, x.d ?? 1)}<small>${x.u}</small></b>${x.sub ? `<em>${esc(x.sub)}</em>` : ""}</div>`).join("")}</div>` : "";
+
+    // tiles, grouped
+    const groups = [
+      [t.g_burns, [
+        ["cycles_today", t.cycles_today, fmt(s.cycles_today, 0), s.short_cycles_today ? `${s.short_cycles_today} ${t.short}` : "", s.short_cycles_today ? "warn" : ""],
+        fl ? ["starts_per_demand_hour", t.starts_dh, fmt(s.starts_per_demand_hour, 1), "", (s.starts_per_demand_hour ?? 0) > 4 ? "warn" : ""]
+           : ["cycles_per_hour", t.cycles_h, fmt(s.cycles_per_hour, 2), "", (s.cycles_per_hour ?? 0) > 3 ? "warn" : ""],
+        ["avg_burn", t.avg_burn, ...durTile(s.avg_burn_min), ""],
+        ["avg_off", t.avg_off, ...durTile(s.avg_off_min), ""],
+      ]],
+      [t.g_time, [
+        ["burn_time_today", t.burn_today, ...durTile(s.burn_hours_today == null ? null : s.burn_hours_today * 60), ""],
+        fl && ["demand_time_today", t.demand_today, ...durTile(s.demand_hours_today == null ? null : s.demand_hours_today * 60), ""],
+        fl ? ["flame_share", t.flame_share, fmt(s.flame_share, 0), "%", ""] : ["duty_cycle", t.duty, fmt(s.duty_cycle, 0), "%", ""],
+        a.entities?.heating_rate && ["heating_rate", t.rate, fmt(s.heating_rate, 2), "°C/h", (s.heating_rate ?? 1) <= 0 ? "warn" : ""],
+      ].filter(Boolean)],
+    ];
+    const tiles = groups.map(([label, list]) => `<div class="grp"><div class="gl">${esc(label)}</div><div class="grid">${list.map(([k, l, v, u, cls]) => `
+      <div class="tile ${cls}" data-ent="${esc(a.entities?.[k] || "")}">
+        <div class="tv">${v}<small>${esc(u)}</small></div><div class="tl">${esc(l)}</div>
+      </div>`).join("")}</div></div>`).join("");
+
+    const chart = this._config.show_timeline ? this._tl24(a) : "";
+    return `${health}${tempsHtml}${chart}${tiles}`;
+  }
+
+  // Flow / return / target temperatures for the last 24 h, from the recorder.
+  _fetchHistory(a) {
+    const src = a.sources || {};
+    const ids = [src.flow, src.return, src.setpoint].filter(Boolean);
+    if (!ids.length || !this._hass?.callWS) return;
+    const key = ids.join();
+    const now = Date.now();
+    if (this._histBusy || (this._hist && this._hist.key === key && now - this._hist.at < 5 * 60000)) return;
+    this._histBusy = true;
+    const conv = (res, id) => (id ? (res?.[id] || []) : [])
+      .map((e) => [e.lu ?? e.lc ?? Date.parse(e.last_updated || e.last_changed) / 1000, parseFloat(e.s ?? e.state)])
+      .filter((p) => Number.isFinite(p[0]) && Number.isFinite(p[1]));
+    this._hass.callWS({
+      type: "history/history_during_period",
+      start_time: new Date(now - 24 * 3600 * 1000).toISOString(),
+      entity_ids: ids, minimal_response: true, no_attributes: true, significant_changes_only: false,
+    }).then((res) => {
+      this._hist = { at: now, key, flow: conv(res, src.flow), ret: conv(res, src.return), tgt: conv(res, src.setpoint) };
+    }).catch(() => {
+      this._hist = { at: now, key, flow: [], ret: [], tgt: [] };
+    }).finally(() => {
+      this._histBusy = false;
+      if (this._tab === "now" || this._config.tabs === false) this._render();
+    });
+  }
+
+  _tl24(a) {
+    const t = this._t;
+    this._fetchHistory(a);
+    const now = Date.now() / 1000, t0 = now - 24 * 3600;
+    const H = this._hist || { flow: [], ret: [], tgt: [] };
+    const live = (arr, v) => (v == null ? arr : [...arr, [now, v]]);
+    const flow = live(H.flow, a.flow), ret = live(H.ret, a.return);
+    const segs = (a.timeline || []).map(([st, en, sh, inf]) => ({ s: st, e: en ?? now, sh, inf, live: en == null }));
+    const dems = (a.demand_timeline || []).map(([st, en]) => ({ s: st, e: en ?? now }));
+    // the boiler reports a meaningless target while idle: keep it only while heating
+    const active = dems.length ? dems : segs;
+    const inAct = (ts) => active.some((x) => ts >= x.s && ts <= x.e);
+    const tgt = live(H.tgt, a.flow_target).filter(([ts, v]) => v >= 10 && v < 90 && inAct(ts));
+    const vals = [...flow, ...ret, ...tgt].filter(([ts]) => ts >= t0).map((p) => p[1]);
+    let y0 = vals.length ? Math.floor((Math.min(...vals) - 3) / 5) * 5 : 20;
+    let y1 = vals.length ? Math.ceil((Math.max(...vals) + 3) / 5) * 5 : 60;
+    if (y1 - y0 < 20) y1 = y0 + 20;
+    const at = (arr, ts) => { let v = null; for (const p of arr) { if (p[0] > ts) break; v = p[1]; } return v; };
+    const line = (arr, X, Y, d, cls) => {
+      const pts = arr.filter(([ts], i) => ts >= d.x0 - 1800 && ts <= d.x1 + 1800 || (arr[i + 1] && arr[i + 1][0] >= d.x0));
+      if (pts.length < 2) return "";
+      return `<polyline class="${cls}" points="${pts.map(([ts, v]) => `${X(ts).toFixed(1)},${Y(v).toFixed(1)}`).join(" ")}"/>`;
+    };
+    const step = (X, Y, d) => active.map((iv) => {
+      const inside = tgt.filter(([ts]) => ts >= iv.s && ts <= iv.e);
+      if (!inside.length || iv.e < d.x0 || iv.s > d.x1) return "";
+      let path = "", prev = null;
+      inside.forEach(([ts, v]) => {
+        const x = X(Math.max(ts, iv.s));
+        path += prev == null ? `M${x.toFixed(1)},${Y(v).toFixed(1)}` : ` H${x.toFixed(1)} V${Y(v).toFixed(1)}`;
+        prev = v;
+      });
+      path += ` H${X(iv.e).toFixed(1)}`;
+      return `<path class="ltgt" d="${path}"/>`;
+    }).join("");
+    const layers = (X, Y, d) => {
+      const top = Y(d.y1), bot = Y(d.y0);
+      let out = dems.map((x) => `<rect x="${X(x.s).toFixed(1)}" y="${top}" width="${Math.max(1, X(x.e) - X(x.s)).toFixed(1)}" height="${bot - top}" class="tdem"/>`).join("");
+      out += step(X, Y, d) + line(ret, X, Y, d, "lret") + line(flow, X, Y, d, "lflow");
+      out += segs.map((x) => `<rect x="${X(x.s).toFixed(1)}" y="${bot - 7}" width="${Math.max(1.2, X(x.e) - X(x.s)).toFixed(1)}" height="6" rx="1" class="seg${x.sh ? " short" : ""}${x.inf ? " inf" : ""}${x.live ? " live" : ""}"/>`).join("");
+      return out;
+    };
+    const tz = -new Date().getTimezoneOffset() * 60;
+    const xTicks = (d) => {
+      const span = d.x1 - d.x0;
+      const st = [300, 600, 900, 1800, 3600, 7200, 10800, 21600].find((v) => span / v <= 6) || 21600;
+      const out = [];
+      for (let v = Math.ceil((d.x0 + tz) / st) * st - tz; v <= d.x1; v += st) {
+        out.push([v, new Date(v * 1000).toLocaleTimeString(this._lang, { hour: "2-digit", minute: "2-digit" })]);
+      }
+      return out;
+    };
+    const hover = (ts) => {
+      const inSeg = segs.find((x) => ts >= x.s && ts <= x.e);
+      const inDem = dems.find((x) => ts >= x.s && ts <= x.e);
+      const f = at(flow, ts), r = at(ret, ts), g = inAct(ts) ? at(tgt, ts) : null;
+      return tipHtml(esc(this._fmtTs(ts, false)), [
+        [t.flow, f != null ? `${fmt(f, 1)} °C` : null],
+        [t.ret, r != null ? `${fmt(r, 1)} °C` : null],
+        [t.target, g != null ? `${fmt(g, 0)} °C` : null],
+        [t.st_label, inSeg ? `🔥 ${t.st_burn}${inSeg.sh ? ` · ${t.tt_short}` : ""}` : inDem ? t.st_dem : t.st_idle],
+        inSeg ? [t.tt_burn, durText((inSeg.e - inSeg.s) / 60)] : null,
+      ]);
+    };
+    const plot = this._plot("tl24", {
+      full: { x0: t0, x1: now, y0, y1 }, H: 190, xOnly: true, minW: 900, xGrid: true,
+      pad: { l: 28, r: 6, t: 34 }, xTicks, xFmt: (v) => v, yFmt: (v) => `${v}°`, layers, points: [], hover,
+    });
+    const hasT = a.sources?.flow || a.sources?.return;
+    const legend = `<div class="legend wrapl">
+      ${a.sources?.flow ? `<span><i class="lc flow"></i>${esc(t.l_flow)}</span>` : ""}
+      ${a.sources?.return ? `<span><i class="lc ret"></i>${esc(t.l_ret)}</span>` : ""}
+      ${a.sources?.setpoint ? `<span><i class="lc tgt"></i>${esc(t.l_tgt)}</span>` : ""}
+      <span><i class="lb burn"></i>${esc(t.l_flame)}</span>
+      ${dems.length ? `<span><i class="lb dem"></i>${esc(t.l_dem)}</span>` : ""}</div>`;
+    const note = hasT && !this._hist ? `<div class="muted small">${esc(t.no_hist)}</div>` : "";
+    return `<div class="sec">${esc(t.last24)}</div>${plot}${legend}${note}`;
   }
 
   _condCls(v) {
@@ -1034,6 +1235,40 @@ const STYLE = `
   .lzone { width: 14px; height: 8px; background: color-mix(in srgb, var(--bm-good) 25%, transparent); display: inline-block; border-radius: 2px; }
   .ldot.cold { background: var(--primary-color); } .ldot.warm { background: var(--bm-burn); }
   .cfoot { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 13px; }
+  .tabs { display: flex; gap: 4px; padding: 3px; border-radius: 12px; background: var(--secondary-background-color); }
+  .tab { flex: 1; border: 0; background: none; color: var(--secondary-text-color); font: inherit; font-size: 13px;
+         padding: 7px 4px; border-radius: 9px; cursor: pointer; white-space: nowrap; }
+  .tab.on { background: var(--card-background-color); color: var(--primary-text-color); font-weight: 500;
+            box-shadow: 0 1px 3px rgba(0,0,0,.15); }
+  .pane { display: flex; flex-direction: column; gap: 12px; }
+  .pills { display: grid; gap: 6px; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); }
+  .pill { display: flex; align-items: center; gap: 6px; padding: 6px 10px; border-radius: 10px; font-size: 13px;
+          background: var(--secondary-background-color); }
+  .pill ha-icon { --mdc-icon-size: 18px; flex: none; }
+  .pill span { color: var(--secondary-text-color); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .pill b { font-weight: 500; white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .pill.good ha-icon, .pill.good b { color: var(--bm-good); }
+  .pill.warn ha-icon, .pill.warn b { color: var(--bm-warn); }
+  .pill.bad { background: color-mix(in srgb, var(--bm-short) 12%, transparent); }
+  .pill.bad ha-icon, .pill.bad b { color: var(--bm-short); }
+  .pill.none ha-icon { color: var(--secondary-text-color); }
+  .pane .temps { grid-template-columns: repeat(3, 1fr); }
+  @container (min-width: 520px) { .pane .temps { grid-template-columns: repeat(6, 1fr); } }
+  .grp .grid { grid-template-columns: repeat(auto-fill, minmax(88px, 1fr)); }
+  .grp { display: flex; flex-direction: column; gap: 4px; }
+  .gl { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--secondary-text-color); }
+  .tdem { fill: color-mix(in srgb, var(--bm-burn) 9%, transparent); }
+  .tburn { fill: color-mix(in srgb, var(--bm-burn) 14%, transparent); }
+  .lflow, .lret { fill: none; stroke-width: 1.6; stroke-linejoin: round; }
+  .lflow { stroke: var(--bm-burn); } .lret { stroke: var(--primary-color); }
+  .ltgt { fill: none; stroke: var(--secondary-text-color); stroke-width: 1.2; stroke-dasharray: 4 3; }
+  .cur { stroke: var(--primary-text-color); stroke-width: 1; opacity: .5; pointer-events: none; }
+  .legend.wrapl { flex-wrap: wrap; gap: 4px 12px; }
+  .lc { width: 14px; height: 0; border-top: 2px solid; display: inline-block; }
+  .lc.flow { border-color: var(--bm-burn); } .lc.ret { border-color: var(--primary-color); }
+  .lc.tgt { border-top: 2px dashed var(--secondary-text-color); }
+  .lb { width: 12px; height: 8px; border-radius: 2px; display: inline-block; }
+  .lb.burn { background: var(--bm-burn); } .lb.dem { background: color-mix(in srgb, var(--bm-burn) 25%, transparent); }
 `;
 
 // ---------------------------------------------------------------- register

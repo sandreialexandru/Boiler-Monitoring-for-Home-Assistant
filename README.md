@@ -212,7 +212,8 @@ type: custom:boiler-monitor-card
 entity: sensor.centrala_status   # the Status sensor of the integration (required)
 title: Centrala                  # optional, defaults to the device name
 mode: full                       # full | compact
-show_timeline: true              # 24 h burner timeline (short cycles in red)
+tabs: true                       # Now / History / Curve / Comfort tabs (false = everything stacked)
+show_timeline: true              # 24 h chart: flow, return, target, flames and demand (zoomable)
 show_daily: true                 # last 14 days: burn hours per day + outdoor avg
 show_correlation: true           # burn vs outdoor scatter + regression + balance point
 show_curve: true                 # heating curve (weather compensation) or fixed-flow chart
@@ -232,16 +233,18 @@ The compact card shows the status, active alerts as icons, four key numbers and 
 
 ### What's on the full card
 
-1. **Header**: animated flame while burning, how long the current burn has lasted, a status chip.
-2. **Alert chips**: short-cycling, condensation lost, heating ineffective, pressure problem. They only appear when active.
-3. **Live values**: flow, target (with the mode, *curve* or *fixed*), return (green while condensing, red above the threshold), ΔT, outdoor, indoor average, pressure.
-4. **Statistics tiles**: cycles today (with short cycles), cycles/h, average burn, average off, 24 h duty cycle, burn today, condensing %, heating rate.
-5. **Last 24 hours**: every burn as a bar.
-6. **Last 14 days**: burn time per day.
-7. **Heating curve / Fixed flow temperature**, if you configured a setpoint sensor.
-8. **Comfort vs outdoor**, if you configured a thermostat: the verdict box, then one dot per hour.
-9. **Warming up the house**: one dot per measured warm-up, and the pre-heat time.
-10. **Burn vs outdoor**: one dot per full day.
+The full card is split into **tabs**, so a phone shows one screen at a time. The tab you pick is remembered on that device. With `tabs: false` all sections are stacked in the same order.
+
+| Tab | What it shows |
+|---|---|
+| **Now** | header and alerts; **health summary** (condensing, ignitions per hour, pressure, comfort verdict, coloured green / amber / red); live values (flow, target with *curve* / *fixed*, return, ΔT, outdoor, indoor); the **24 h chart**; tiles grouped as *Burns · 24 h* and *Today* |
+| **History** | last 14 days (burn time per day) and burn vs outdoor (balance point) |
+| **Curve** | heating curve or fixed flow chart, if a setpoint sensor is set |
+| **Comfort** | comfort vs outdoor verdict and the warm-up model, if a thermostat is set |
+
+A tab without data (e.g. *Curve* without a setpoint sensor) is not shown.
+
+**The 24 h chart** draws, from the Home Assistant recorder, the **flow** (orange) and **return** (blue) temperatures, the **flow target** (dashed, only while heating, because many boilers report a meaningless value while idle), the **flames** as a lane at the bottom (red = short cycle, lighter = ignition seen from a flow jump) and, with a flame sensor, the **heat demand** as a pale band. Hover or tap anywhere to read the values at that minute. It can be zoomed down to 15 minutes (see *Zooming the charts*). The temperatures are read again every 5 minutes.
 
 Durations are always in hours and minutes (`2 h 14 min`, `45 min`), never decimal hours. Tapping a value opens the more-info dialog of the underlying entity. The card follows your theme (light/dark), works in masonry and sections views, and has a visual editor.
 
@@ -251,7 +254,7 @@ Hover any bar, dot or timeline segment with the mouse, or **tap** it on a phone 
 
 | Where | What the tooltip shows |
 |---|---|
-| Last 24 hours (a segment) | start – end time, burn duration, whether it was a short cycle. With a flame sensor, the pale band behind the flames is the heat demand: demand time and flame time within it |
+| Last 24 hours (anywhere on the chart) | the time, flow, return and target at that minute, whether it was burning, in demand or off, and the duration of that burn |
 | Last 14 days (a bar) / Burn vs outdoor (a dot) | the day, burn time, cycles (and how many were short), average outdoor temperature, condensing %, average ΔT |
 | Heating curve (a dot) | the day and hour, outdoor temperature, target flow, actual flow, actual − target, regulation mode |
 | Comfort vs outdoor (a dot) | the day and hour, outdoor, indoor, thermostat target, indoor − target, burner on %, short cycles |
@@ -265,7 +268,7 @@ Hover any bar, dot or timeline segment with the mouse, or **tap** it on a phone 
 
 ### Zooming the charts
 
-The **Heating curve / Fixed flow** and **Burn vs outdoor** charts can be zoomed, so points that sit on top of each other can be told apart.
+The **Last 24 hours**, **Heating curve / Fixed flow**, **Comfort vs outdoor**, **Warming up** and **Burn vs outdoor** charts can be zoomed, so points that sit on top of each other can be told apart. The 24 h chart zooms on time only (down to 15 minutes), so a drag selects a time range and the temperature axis stays the same.
 
 | | Mouse | Touch (phone, wall tablet) |
 |---|---|---|
@@ -279,7 +282,11 @@ The **Heating curve / Fixed flow** and **Burn vs outdoor** charts can be zoomed,
 
 The zoom stays as you left it while the card refreshes with new data. It resets when the page is reloaded.
 
-<p align="center"><img src="docs/images/zoom-curve.png" width="420" alt="Zoomed heating curve"></p>
+<p align="center">
+  <img src="docs/images/card-24h-zoom.png" width="420" alt="24 h chart zoomed to a few hours, with the values at one minute">
+  &nbsp;
+  <img src="docs/images/zoom-curve.png" width="420" alt="Zoomed heating curve">
+</p>
 
 A complete example dashboard view is in [`examples/dashboard.yaml`](examples/dashboard.yaml).
 
@@ -315,7 +322,10 @@ The ranges below are rules of thumb for a gas condensing boiler with radiators. 
 
 ### Last 24 hours
 
-Every orange segment is one burn. Its width is how long it lasted, and the gap before it is the pause.
+The lines show what the water did: **orange = flow**, **blue = return**, **dashed = the target** the boiler aimed for. In the lane at the bottom, every orange segment is one burn. Its width is how long it lasted, and the gap before it is the pause.
+- **Flow rising quickly above the target, then falling** with each burn: the boiler fires at minimum power and stops on overshoot. Many such teeth per hour = cycling.
+- **Flow steady close to the target** for a long time: the boiler modulates, which is what you want.
+- **Return close to flow** (lines almost touching): little heat given off, the pump is fast or the house needs little heat. A wide gap = the radiators give off a lot.
 - **Long, well-spaced segments** are what you want.
 - **Many thin segments packed together** mean the boiler is switching on and off all the time.
 - **Red** = short cycle (it restarted too soon after the previous stop). Note **when** they happen: often in the morning after a night set-back, or at midday when the sun comes out.

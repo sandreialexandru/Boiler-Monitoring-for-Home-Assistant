@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 DOMAIN = "boiler_monitor"
-VERSION = "1.6.2"
+VERSION = "1.7.0"
 
 # Config (entities) — set in config flow
 CONF_NAME = "name"
