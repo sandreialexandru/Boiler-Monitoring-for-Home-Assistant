@@ -992,3 +992,22 @@ async def test_flame_unavailable_at_startup_is_not_a_burn(hass: HomeAssistant, f
     assert st(hass, "sensor.centrala_status").state == "demand"
     await advance(hass, freezer, 2)
     assert st(hass, "sensor.centrala_status").state == "heating"
+
+
+async def test_balance_point_hidden_when_line_is_flat(hass: HomeAssistant, freezer):
+    """Burn barely changes with outdoor (e.g. neighbours unheated): no absurd balance point."""
+    freezer.move_to("2026-11-10 00:00:30+02:00")
+    temps(hass)
+    await burner(hass, False)
+    await setup(hass)
+    for out, burn_per_h in [(10, 20), (12, 21), (11, 19), (13, 20), (10, 21), (12, 20), (11, 21)]:
+        temps(hass, out=out)
+        for _h in range(24):
+            await burner(hass, True)
+            await advance(hass, freezer, burn_per_h)
+            await burner(hass, False)
+            await advance(hass, freezer, 60 - burn_per_h)
+    reg = st(hass, "sensor.centrala_status").attributes["regression"]
+    assert reg is not None and "balance_point" not in reg
+    assert reg["balance_reason"] in ("weak_fit", "out_of_range")
+    assert st(hass, "sensor.centrala_balance_point").state == "unknown"

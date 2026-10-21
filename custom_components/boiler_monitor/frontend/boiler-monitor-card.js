@@ -13,7 +13,7 @@
  *   show_comfort: true    # comfort vs outdoor + tuning verdict (needs a thermostat)
  *   show_heatup: true     # how fast the house warms up + pre-heat time
  */
-const CARD_VERSION = "1.6.1";
+const CARD_VERSION = "1.6.2";
 
 const I18N = {
   en: {
@@ -25,7 +25,7 @@ const I18N = {
     cycles_today: "Cycles today", cycles_h: "Cycles / h", avg_burn: "Avg burn", avg_off: "Avg off",
     duty: "Duty 24h", burn_today: "Burn today", cond: "Condensing", rate: "Heating rate",
     short: "short", last24: "Last 24 hours", days: "Last 14 days", corr: "Burn vs outdoor",
-    balance: "Balance point", per_hdd: "min per degree-day", not_enough: "Needs ≥ 3 full days of data",
+    balance: "Balance point", bp_unreliable: "Balance point: not reliable yet", per_hdd: "min per degree-day", not_enough: "Needs ≥ 3 full days of data",
     a_short: "Short-cycling", a_cond: "Condensation lost", a_ineff: "Heating ineffective",
     no_entity: "Pick the Boiler Monitor status sensor", burn_h: "burn time",
     target: "Target", m_curve: "curve", m_fixed: "fixed", pressure: "Pressure", a_press: "Pressure problem",
@@ -70,7 +70,7 @@ comfort_title: "Comfort vs outdoor", heat_title: "Warming up the house",
     cycles_today: "Cicluri azi", cycles_h: "Cicluri / h", avg_burn: "Ardere medie", avg_off: "Pauză medie",
     duty: "Funcționare 24h", burn_today: "Ardere azi", cond: "Condensare", rate: "Rată încălzire",
     short: "scurte", last24: "Ultimele 24 de ore", days: "Ultimele 14 zile", corr: "Ardere vs exterior",
-    balance: "Punct de echilibru", per_hdd: "min pe grad-zi", not_enough: "Necesită ≥ 3 zile complete de date",
+    balance: "Punct de echilibru", bp_unreliable: "Punct de echilibru: încă nesigur", per_hdd: "min pe grad-zi", not_enough: "Necesită ≥ 3 zile complete de date",
     a_short: "Short-cycling", a_cond: "Condensare pierdută", a_ineff: "Încălzire ineficientă",
     no_entity: "Alege senzorul de stare Boiler Monitor", burn_h: "timp de ardere",
     target: "Cerut", m_curve: "curbă", m_fixed: "fix", pressure: "Presiune", a_press: "Problemă presiune",
@@ -893,7 +893,7 @@ class BoilerMonitorCard extends HTMLElement {
     });
     const perHdd = a.stats?.burn_per_hdd;
     const foot = `<div class="cfoot">
-      ${reg?.balance_point != null ? `<span data-ent="${esc(a.entities?.balance_point || "")}"><b>${fmt(reg.balance_point, 1)}°C</b> ${esc(t.balance)}</span>` : ""}
+      ${reg?.balance_point != null ? `<span data-ent="${esc(a.entities?.balance_point || "")}"><b>${fmt(reg.balance_point, 1)}°C</b> ${esc(t.balance)}</span>` : reg ? `<span class="muted">${esc(t.bp_unreliable)}</span>` : ""}
       ${perHdd != null ? `<span data-ent="${esc(a.entities?.burn_per_hdd || "")}"><b>${fmt(perHdd * 60, 0)}</b> ${esc(t.per_hdd)}</span>` : ""}
       ${reg ? `<span class="muted">R² ${fmt(reg.r2, 2)} · n=${reg.n}</span>` : ""}</div>`;
     return `${head}${plot}${foot}`;

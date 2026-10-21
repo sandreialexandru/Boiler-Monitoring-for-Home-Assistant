@@ -100,6 +100,12 @@ FLOW_SETTLE_S = 300  # ignore the first minutes of a burn for flow-vs-target
 EFFECT_MIN_DUTY = 0.5  # burner share of the check period needed to judge the heating effect
 CURVE_HOURS = 7 * 24
 HDD_BASE = 18.0  # °C, base temperature for heating degree-days
+# The balance point is only shown when the line really says something:
+BP_MIN_DAYS = 4  # complete days in the fit
+BP_MIN_BURN_DAYS = 3  # of which days with at least BP_MIN_BURN_H of burn
+BP_MIN_BURN_H = 0.25
+BP_MIN_R2 = 0.3
+BP_RANGE = (0.0, 25.0)  # °C; anything outside is an artefact of a flat line
 ALERT_THROTTLE_S = 3600
 BAD_STATES = (STATE_UNAVAILABLE, STATE_UNKNOWN, None, "", "none")
 
@@ -1360,8 +1366,17 @@ class BoilerMonitor:
         a = my - b * mx
         syy = sum((p[1] - my) ** 2 for p in pts)
         r2 = (sxy * sxy) / (sxx * syy) if syy > 0 else 0.0
-        res = {"slope": round(b, 3), "intercept": round(a, 3), "r2": round(r2, 2), "n": n}
-        if b < 0:
+        res: dict[str, Any] = {"slope": round(b, 3), "intercept": round(a, 3), "r2": round(r2, 2), "n": n}
+        # A nearly flat or noisy line crosses zero anywhere (258 °C, -40 °C...):
+        # only report a balance point the data can actually support.
+        burn_days = sum(1 for p in pts if p[1] >= BP_MIN_BURN_H)
+        if n < BP_MIN_DAYS or burn_days < BP_MIN_BURN_DAYS:
+            res["balance_reason"] = "few_days"
+        elif b >= 0 or r2 < BP_MIN_R2:
+            res["balance_reason"] = "weak_fit"
+        elif not BP_RANGE[0] <= -a / b <= BP_RANGE[1]:
+            res["balance_reason"] = "out_of_range"
+        else:
             res["balance_point"] = round(-a / b, 1)
         return res
 
