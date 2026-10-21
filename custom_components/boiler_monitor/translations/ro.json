@@ -13,30 +13,44 @@
           "return_temp_entity": "Senzor temperatură retur (°C) – opțional",
           "flow_setpoint_entity": "Senzor tur cerut / setpoint (°C) – opțional",
           "thermoregulation_entity": "Entitate termoreglare automată – opțional",
+          "thermoregulation_on_state": "Starea care înseamnă „termoreglare automată pornită” (text) – opțional",
           "outdoor_temp_entity": "Senzor temperatură exterioară (°C) – obligatoriu dacă nu ai entitate weather",
           "indoor_temp_entities": "Senzori temperatură interioară (°C)",
           "thermostat_entity": "Termostat de cameră (climate) – opțional",
           "weather_entity": "Entitate weather – obligatorie dacă nu ai senzor exterior",
           "pressure_entity": "Senzor presiune circuit încălzire (bar) – opțional",
           "season_entity": "Entitate sezon de încălzire – opțional",
-          "season_state": "Starea care înseamnă „sezon de încălzire activ” (text)"
+          "season_state": "Starea care înseamnă „sezon de încălzire activ” (text)",
+          "dhw_entity": "Apă caldă menajeră activă – opțional",
+          "modulation_entity": "Senzor modulație arzător (%) – opțional",
+          "max_power_kw": "Puterea maximă de încălzire a centralei (kW) – opțional",
+          "min_power_kw": "Puterea minimă de încălzire a centralei (kW) – opțional",
+          "burner_starts_entity": "Contor porniri arzător al centralei – opțional",
+          "gas_entity": "Contor gaz (consum total) – opțional"
         },
         "data_description": {
           "name": "Un nume pentru această centrală. Se folosește pentru dispozitiv și pentru ID-urile entităților, ex. „Centrala” creează sensor.centrala_status.",
           "burner_entity": "Entitatea care este ON cât arde arzătorul sau cât există cerere de căldură. Poate fi un switch (de ex. releul ESPHome care comandă centrala), un binary_sensor (flacără), un input_boolean, o entitate climate (se folosește hvac_action) sau un senzor cu stare text. Dacă alegi și un senzor de flacără mai jos, această entitate este cererea de căldură.",
-          "burner_on_state": "Starea exactă care înseamnă „arzător pornit”: „on” pentru switch / binary_sensor / input_boolean, „heating” pentru climate, sau textul exact al stării unui senzor.",
+          "burner_on_state": "Starea exactă care înseamnă „arzător pornit”: „on” pentru switch / binary_sensor / input_boolean, „heating” pentru climate, sau textul exact al stării unui senzor. Pentru un senzor numeric poți folosi un prag: „>60” înseamnă pornit când valoarea e peste 60 (ex. puterea arzătorului în W), „<5” înseamnă pornit sub 5.",
           "flame_entity": "Un binary_sensor care este ON cât arde flacăra, de ex. \"Ariston is flame on\". Dacă îl alegi, entitatea arzătorului de mai sus devine cererea de căldură și arderea se numără doar când există cerere ȘI flacără: flacăra fără cerere (apă caldă menajeră) este ignorată, la fel și pauzele pe care centrala le face singură în timp ce releul cere căldură. Senzorii de flacără din cloud ratează aprinderile scurte; dacă ai senzor de tur, o creștere bruscă a turului în timpul cererii, fără flacără raportată, se numără ca o ardere de 1 minut.",
           "flow_temp_entity": "Temperatura apei calde care iese din centrală spre calorifere, în °C. Necesar pentru ΔT tur-retur.",
           "return_temp_entity": "Temperatura apei care se întoarce de la calorifere în centrală, în °C. Necesar pentru procentul de condensare și alerta „Condensare pierdută”.",
           "flow_setpoint_entity": "Temperatura de tur pe care o urmărește centrala, în °C – ex. „Ariston CH flow setpoint temp”. Cu termoreglarea automată PORNITĂ urmează curba de compensare climatică; OPRITĂ, e temperatura de tur fixă setată de tine. Activează comparația tur real vs cerut și graficul curbei.",
-          "thermoregulation_entity": "Comutatorul care pornește/oprește compensarea climatică a centralei – ex. „Ariston automatic thermoregulation”. PORNIT = turul cerut urmează temperatura exterioară (curbă); OPRIT = tur fix. Cardul și graficele se adaptează la mod.",
+          "thermoregulation_entity": "Entitatea care pornește/oprește compensarea climatică a centralei – ex. „Ariston automatic thermoregulation”. Poate fi switch / binary_sensor sau un select / senzor cu stare text (completează starea potrivită mai jos). PORNIT = turul cerut urmează temperatura exterioară (curbă); OPRIT = tur fix. Cardul și graficele se adaptează la mod.",
+          "thermoregulation_on_state": "Doar dacă entitatea de termoreglare e un select sau senzor: starea exactă care înseamnă compensare climatică activă (ex. „auto”, „weather”). Gol = „on”.",
           "outdoor_temp_entity": "Temperatura aerului de afară, în °C. Necesar pentru corelarea cu exteriorul, punctul de echilibru, orele de ardere pe grad-zi, curba de încălzire și verdictul de confort. Alege acest senzor sau o entitate weather; dacă le alegi pe amândouă, temperatura exterioară vine de la acest senzor.",
           "indoor_temp_entities": "Unul sau mai mulți senzori de cameră, în °C. Obligatoriu. Media lor (senzorii indisponibili sunt ignorați) este temperatura camerei folosită pentru verificarea efectului încălzirii, timpul de încălzire și analiza de confort.",
           "thermostat_entity": "Entitatea climate care decide când se încălzește, ex. Generic Thermostat. Temperatura ei setată e referința de confort: necesară pentru verdictul confort vs exterior și pentru timpul de preîncălzire. Dacă nu ai senzori de interior, temperatura ei curentă e folosită ca temperatură în cameră.",
           "weather_entity": "O entitate weather, de ex. Tomorrow.io. Dacă nu ai senzor exterior, temperatura ei curentă este folosită ca temperatură exterioară. Cu prognoză orară, acțiunea estimate_preheat folosește și temperatura prognozată.",
           "pressure_entity": "Presiunea apei din circuitul de încălzire, în bar – ex. „Ariston heating circuit pressure”. Activează alerta de presiune mică/mare și tendința pe 7 zile (detectare scurgeri lente). Monitorizată tot anul.",
           "season_entity": "Opțional. Cât timp această entitate NU e în starea de mai jos, monitorizarea e pe pauză (nu se numără cicluri, nu se trimit alerte) – util vara, când centrala face doar apă caldă. Lasă gol pentru monitorizare tot anul.",
-          "season_state": "Starea entității de sezon care înseamnă „sezon de încălzire activ”, ex. „on” (input_boolean / switch), „heat” (climate) sau textul exact al opțiunii unui input_select. Ignorat dacă nu e aleasă o entitate de sezon."
+          "season_state": "Starea entității de sezon care înseamnă „sezon de încălzire activ”, ex. „on” (input_boolean / switch), „heat” (climate) sau textul exact al opțiunii unui input_select. Ignorat dacă nu e aleasă o entitate de sezon.",
+          "dhw_entity": "O entitate care e PORNITĂ (sau are starea „on” / „dhw” / „hot_water”) cât timp centrala încălzește apa caldă menajeră. Timpul de flacără pe apă caldă nu se numără ca încălzire, iar starea arată „Apă caldă”. Util la centralele fără senzor separat de flacără.",
+          "modulation_entity": "Modulația curentă a arzătorului în % (ex. OpenTherm „relative modulation level”). Activează modulația medie și procentul de timp la minim. Împreună cu puterea maximă dă și puterea termică și energia în kWh.",
+          "max_power_kw": "Puterea nominală de încălzire la 100 % modulație, din plăcuța sau manualul centralei (ex. 24). Necesară pentru putere și kWh.",
+          "min_power_kw": "Puterea la modulația minimă (ex. 3,5). Opțional: dacă e completată, puterea estimată nu coboară sub ea cât timp arde.",
+          "burner_starts_entity": "Un contor de porniri ale arzătorului raportat chiar de centrală (OpenTherm, ems-esp, ebusd). E mai exact decât numărarea releului și se folosește pentru pornirile de azi și pornirile pe oră de cerere.",
+          "gas_entity": "Un contor de gaz crescător (m³ sau kWh), ex. de la un cititor de contor. Activează gazul de azi și gazul pe grad-zi. Resetarea contorului este detectată și ignorată."
         }
       },
       "reconfigure": {
@@ -49,29 +63,43 @@
           "return_temp_entity": "Senzor temperatură retur (°C) – opțional",
           "flow_setpoint_entity": "Senzor tur cerut / setpoint (°C) – opțional",
           "thermoregulation_entity": "Entitate termoreglare automată – opțional",
+          "thermoregulation_on_state": "Starea care înseamnă „termoreglare automată pornită” (text) – opțional",
           "outdoor_temp_entity": "Senzor temperatură exterioară (°C) – obligatoriu dacă nu ai entitate weather",
           "indoor_temp_entities": "Senzori temperatură interioară (°C)",
           "thermostat_entity": "Termostat de cameră (climate) – opțional",
           "weather_entity": "Entitate weather – obligatorie dacă nu ai senzor exterior",
           "pressure_entity": "Senzor presiune circuit încălzire (bar) – opțional",
           "season_entity": "Entitate sezon de încălzire – opțional",
-          "season_state": "Starea care înseamnă „sezon de încălzire activ” (text)"
+          "season_state": "Starea care înseamnă „sezon de încălzire activ” (text)",
+          "dhw_entity": "Apă caldă menajeră activă – opțional",
+          "modulation_entity": "Senzor modulație arzător (%) – opțional",
+          "max_power_kw": "Puterea maximă de încălzire a centralei (kW) – opțional",
+          "min_power_kw": "Puterea minimă de încălzire a centralei (kW) – opțional",
+          "burner_starts_entity": "Contor porniri arzător al centralei – opțional",
+          "gas_entity": "Contor gaz (consum total) – opțional"
         },
         "data_description": {
           "burner_entity": "Entitatea care este ON cât arde arzătorul sau cât există cerere de căldură. Poate fi un switch (de ex. releul ESPHome care comandă centrala), un binary_sensor (flacără), un input_boolean, o entitate climate (se folosește hvac_action) sau un senzor cu stare text. Dacă alegi și un senzor de flacără mai jos, această entitate este cererea de căldură.",
-          "burner_on_state": "Starea exactă care înseamnă „arzător pornit”: „on” pentru switch / binary_sensor / input_boolean, „heating” pentru climate, sau textul exact al stării unui senzor.",
+          "burner_on_state": "Starea exactă care înseamnă „arzător pornit”: „on” pentru switch / binary_sensor / input_boolean, „heating” pentru climate, sau textul exact al stării unui senzor. Pentru un senzor numeric poți folosi un prag: „>60” înseamnă pornit când valoarea e peste 60 (ex. puterea arzătorului în W), „<5” înseamnă pornit sub 5.",
           "flame_entity": "Un binary_sensor care este ON cât arde flacăra, de ex. \"Ariston is flame on\". Dacă îl alegi, entitatea arzătorului de mai sus devine cererea de căldură și arderea se numără doar când există cerere ȘI flacără: flacăra fără cerere (apă caldă menajeră) este ignorată, la fel și pauzele pe care centrala le face singură în timp ce releul cere căldură. Senzorii de flacără din cloud ratează aprinderile scurte; dacă ai senzor de tur, o creștere bruscă a turului în timpul cererii, fără flacără raportată, se numără ca o ardere de 1 minut.",
           "flow_temp_entity": "Temperatura apei calde care iese din centrală spre calorifere, în °C. Necesar pentru ΔT tur-retur.",
           "return_temp_entity": "Temperatura apei care se întoarce de la calorifere în centrală, în °C. Necesar pentru procentul de condensare și alerta „Condensare pierdută”.",
           "flow_setpoint_entity": "Temperatura de tur pe care o urmărește centrala, în °C – ex. „Ariston CH flow setpoint temp”. Cu termoreglarea automată PORNITĂ urmează curba de compensare climatică; OPRITĂ, e temperatura de tur fixă setată de tine. Activează comparația tur real vs cerut și graficul curbei.",
-          "thermoregulation_entity": "Comutatorul care pornește/oprește compensarea climatică a centralei – ex. „Ariston automatic thermoregulation”. PORNIT = turul cerut urmează temperatura exterioară (curbă); OPRIT = tur fix. Cardul și graficele se adaptează la mod.",
+          "thermoregulation_entity": "Entitatea care pornește/oprește compensarea climatică a centralei – ex. „Ariston automatic thermoregulation”. Poate fi switch / binary_sensor sau un select / senzor cu stare text (completează starea potrivită mai jos). PORNIT = turul cerut urmează temperatura exterioară (curbă); OPRIT = tur fix. Cardul și graficele se adaptează la mod.",
+          "thermoregulation_on_state": "Doar dacă entitatea de termoreglare e un select sau senzor: starea exactă care înseamnă compensare climatică activă (ex. „auto”, „weather”). Gol = „on”.",
           "outdoor_temp_entity": "Temperatura aerului de afară, în °C. Necesar pentru corelarea cu exteriorul, punctul de echilibru, orele de ardere pe grad-zi, curba de încălzire și verdictul de confort. Alege acest senzor sau o entitate weather; dacă le alegi pe amândouă, temperatura exterioară vine de la acest senzor.",
           "indoor_temp_entities": "Unul sau mai mulți senzori de cameră, în °C. Obligatoriu. Media lor (senzorii indisponibili sunt ignorați) este temperatura camerei folosită pentru verificarea efectului încălzirii, timpul de încălzire și analiza de confort.",
           "thermostat_entity": "Entitatea climate care decide când se încălzește, ex. Generic Thermostat. Temperatura ei setată e referința de confort: necesară pentru verdictul confort vs exterior și pentru timpul de preîncălzire. Dacă nu ai senzori de interior, temperatura ei curentă e folosită ca temperatură în cameră.",
           "weather_entity": "O entitate weather, de ex. Tomorrow.io. Dacă nu ai senzor exterior, temperatura ei curentă este folosită ca temperatură exterioară. Cu prognoză orară, acțiunea estimate_preheat folosește și temperatura prognozată.",
           "pressure_entity": "Presiunea apei din circuitul de încălzire, în bar – ex. „Ariston heating circuit pressure”. Activează alerta de presiune mică/mare și tendința pe 7 zile (detectare scurgeri lente). Monitorizată tot anul.",
           "season_entity": "Opțional. Cât timp această entitate NU e în starea de mai jos, monitorizarea e pe pauză (nu se numără cicluri, nu se trimit alerte) – util vara, când centrala face doar apă caldă. Lasă gol pentru monitorizare tot anul.",
-          "season_state": "Starea entității de sezon care înseamnă „sezon de încălzire activ”, ex. „on” (input_boolean / switch), „heat” (climate) sau textul exact al opțiunii unui input_select. Ignorat dacă nu e aleasă o entitate de sezon."
+          "season_state": "Starea entității de sezon care înseamnă „sezon de încălzire activ”, ex. „on” (input_boolean / switch), „heat” (climate) sau textul exact al opțiunii unui input_select. Ignorat dacă nu e aleasă o entitate de sezon.",
+          "dhw_entity": "O entitate care e PORNITĂ (sau are starea „on” / „dhw” / „hot_water”) cât timp centrala încălzește apa caldă menajeră. Timpul de flacără pe apă caldă nu se numără ca încălzire, iar starea arată „Apă caldă”. Util la centralele fără senzor separat de flacără.",
+          "modulation_entity": "Modulația curentă a arzătorului în % (ex. OpenTherm „relative modulation level”). Activează modulația medie și procentul de timp la minim. Împreună cu puterea maximă dă și puterea termică și energia în kWh.",
+          "max_power_kw": "Puterea nominală de încălzire la 100 % modulație, din plăcuța sau manualul centralei (ex. 24). Necesară pentru putere și kWh.",
+          "min_power_kw": "Puterea la modulația minimă (ex. 3,5). Opțional: dacă e completată, puterea estimată nu coboară sub ea cât timp arde.",
+          "burner_starts_entity": "Un contor de porniri ale arzătorului raportat chiar de centrală (OpenTherm, ems-esp, ebusd). E mai exact decât numărarea releului și se folosește pentru pornirile de azi și pornirile pe oră de cerere.",
+          "gas_entity": "Un contor de gaz crescător (m³ sau kWh), ex. de la un cititor de contor. Activează gazul de azi și gazul pe grad-zi. Resetarea contorului este detectată și ignorată."
         },
         "description": "Obligatorii: entitatea arzătorului (sau a cererii de căldură), senzorii de temperatură interioară și o sursă pentru temperatura exterioară (senzor exterior sau entitate weather). Restul sunt opționale: fiecare senzor adăugat activează rapoartele care au nevoie de el, iar rapoartele al căror senzor lipsește pur și simplu nu se creează."
       }
@@ -127,7 +155,8 @@
           "idle": "În așteptare",
           "off_season": "În afara sezonului",
           "unavailable": "Indisponibil",
-          "demand": "Cerere, flacără stinsă"
+          "demand": "Cerere, flacără stinsă",
+          "hot_water": "Apă caldă"
         }
       },
       "cycles_today": {
@@ -213,6 +242,36 @@
       },
       "preheat_time": {
         "name": "Timp de preîncălzire"
+      },
+      "heat_power": {
+        "name": "Putere termică"
+      },
+      "energy_today": {
+        "name": "Energie termică azi"
+      },
+      "energy_per_hdd": {
+        "name": "Energie termică pe grad-zi (7z)"
+      },
+      "modulation": {
+        "name": "Modulație"
+      },
+      "modulation_avg": {
+        "name": "Modulație medie (24h)"
+      },
+      "modulation_low": {
+        "name": "Timp la modulație minimă (24h)"
+      },
+      "boiler_starts_today": {
+        "name": "Porniri centrală azi"
+      },
+      "boiler_starts_per_hour": {
+        "name": "Porniri centrală pe oră de cerere"
+      },
+      "gas_today": {
+        "name": "Gaz azi"
+      },
+      "gas_per_hdd": {
+        "name": "Gaz pe grad-zi (7z)"
       }
     },
     "binary_sensor": {

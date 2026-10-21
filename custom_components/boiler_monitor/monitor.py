@@ -32,7 +32,16 @@ from .const import (
     CONF_BURNER_ON_STATE,
     CONF_CSV_LOG,
     CONF_EFFECT_DELAY_MIN,
+    CONF_DHW,
     CONF_FLAME,
+    CONF_GAS,
+    CONF_MODULATION,
+    CONF_POWER_MAX,
+    CONF_POWER_MIN,
+    CONF_STARTS,
+    CONF_THERMOREG_STATE,
+    MOD_LOW_PCT,
+    STATUS_DHW,
     CONF_FLOW_SETPOINT,
     CONF_FLOW_TEMP,
     CONF_INDOOR_TEMPS,
@@ -185,6 +194,12 @@ def _new_bucket() -> dict[str, float]:
         "dev_n": 0,
         "p_sum": 0.0,  # pressure, sampled all year
         "p_n": 0,
+        "kwh": 0.0,  # heat produced while burning (modulation x power)
+        "mod_sum": 0.0,  # modulation % while burning
+        "mod_n": 0,
+        "mod_low_n": 0,  # of those, samples at or below MOD_LOW_PCT
+        "cnt": 0,  # ignitions counted by the boiler's own counter
+        "gas": 0.0,  # gas used (unit of the gas entity)
     }
 
 
@@ -209,6 +224,10 @@ class BoilerMonitor:
         self._infer_unsub: CALLBACK_TYPE | None = None
         self._prev_flow: float | None = None
         self._flame_na_since: float | None = None
+        self.dhw_active = False
+        self._dhw_ended: float | None = None
+        # last readings of the boiler counters (gas meter, ignitions)
+        self.counters: dict[str, float] = {}
 
         self.cycles: list[dict[str, Any]] = []
         self.hours: dict[int, dict[str, float]] = {}
@@ -276,6 +295,7 @@ class BoilerMonitor:
         self.last_alert = data.get("last_alert", {})
         self.heatups = data.get("heatups", [])
         self.demands = data.get("demands", [])
+        self.counters = data.get("counters", {})
         last_saved = data.get("saved_at")
 
         now = dt_util.utcnow().timestamp()
@@ -299,6 +319,8 @@ class BoilerMonitor:
         watched = [cfg[CONF_BURNER]]
         if cfg.get(CONF_FLAME):
             watched.append(cfg[CONF_FLAME])
+        if cfg.get(CONF_DHW):
+            watched.append(cfg[CONF_DHW])
         if cfg.get(CONF_SEASON_ENTITY):
             watched.append(cfg[CONF_SEASON_ENTITY])
         self._unsubs.append(
@@ -322,6 +344,12 @@ class BoilerMonitor:
                 async_track_state_change_event(
                     self.hass, [cfg[CONF_RETURN_TEMP]], self._on_return_event
                 )
+            )
+        counters = [e for e in (cfg.get(CONF_STARTS), cfg.get(CONF_GAS)) if e]
+        if counters:
+            self._read_counters(now, init=True)
+            self._unsubs.append(
+                async_track_state_change_event(self.hass, counters, self._on_counter_event)
             )
         if cfg.get(CONF_FLAME) and cfg.get(CONF_FLOW_TEMP):
             self._prev_flow = self.flow_temp()
@@ -356,6 +384,7 @@ class BoilerMonitor:
             "last_alert": self.last_alert,
             "heatups": self.heatups,
             "demands": self.demands,
+            "counters": self.counters,
             "saved_at": dt_util.utcnow().timestamp(),
         }
 
@@ -443,6 +472,49 @@ class BoilerMonitor:
     def flow_target(self) -> float | None:
         return self._temp_val(self.cfg.get(CONF_FLOW_SETPOINT))
 
+    def modulation(self) -> float | None:
+        v = self._state_val(self.cfg.get(CONF_MODULATION))
+        return None if v is None else max(0.0, min(100.0, v))
+
+    @property
+    def has_power(self) -> bool:
+        return bool(self.cfg.get(CONF_MODULATION)) and _f(self.cfg.get(CONF_POWER_MAX)) not in (None, 0.0)
+
+    def heat_power(self) -> float | None:
+        """Heat output now in kW: modulation x maximum power, never below the minimum."""
+        if not self.has_power:
+            return None
+        if not self.burner_on:
+            return 0.0
+        mod = self.modulation()
+        if mod is None:
+            return None
+        pmax = float(self.cfg[CONF_POWER_MAX])
+        pmin = _f(self.cfg.get(CONF_POWER_MIN)) or 0.0
+        return max(pmin, pmax * mod / 100)
+
+    def _read_counters(self, now: float, init: bool = False) -> None:
+        """Add the increase of the boiler's counters to the current hour."""
+        for key, ent, field in (("starts", self.cfg.get(CONF_STARTS), "cnt"), ("gas", self.cfg.get(CONF_GAS), "gas")):
+            if not ent:
+                continue
+            v = self._state_val(ent)
+            if v is None:
+                continue
+            last = self.counters.get(key)
+            self.counters[key] = v
+            if init or last is None:
+                continue
+            delta = v - last
+            # a counter that went down was reset or replaced: start again from here
+            if delta > 0:
+                _add(self._bucket(now), field, delta)
+
+    @callback
+    def _on_counter_event(self, event: Event) -> None:
+        self._read_counters(dt_util.utcnow().timestamp())
+        self._notify_entities()
+
     def pressure(self) -> float | None:
         ent = self.cfg.get(CONF_PRESSURE)
         st = self.hass.states.get(ent) if ent else None
@@ -459,7 +531,10 @@ class BoilerMonitor:
         st = self.hass.states.get(ent)
         if st is None or st.state in (STATE_UNAVAILABLE, STATE_UNKNOWN):
             return self._last_mode
-        return MODE_CURVE if st.state.lower() in ("on", "true", "1") else MODE_FIXED
+        want = str(self._opt(CONF_THERMOREG_STATE, "on") or "on").strip().lower()
+        val = st.state.strip().lower()
+        on = val == want or (want == "on" and val in ("true", "1", "yes"))
+        return MODE_CURVE if on else MODE_FIXED
 
     def _thermostat(self) -> State | None:
         ent = self.cfg.get(CONF_THERMOSTAT)
@@ -497,6 +572,12 @@ class BoilerMonitor:
             action = st.attributes.get("hvac_action")
             target = on_state if on_state != "on" else "heating"
             return str(action).lower() == target.lower()
+        if on_state[:1] in (">", "<"):
+            # numeric source, e.g. ">60" for a smart plug's power in W or ">0" for modulation
+            v, thr = _f(st.state), _f(on_state[1:].strip())
+            if v is None or thr is None:
+                return None
+            return v > thr if on_state[0] == ">" else v < thr
         return st.state.lower() == on_state.lower()
 
     def _refresh_season(self) -> None:
@@ -631,6 +712,13 @@ class BoilerMonitor:
             return None
         return st.state.lower() in ("on", "true", "1")
 
+    def _dhw_on(self) -> bool | None:
+        ent = self.cfg.get(CONF_DHW)
+        st = self.hass.states.get(ent) if ent else None
+        if st is None or st.state in (STATE_UNAVAILABLE, STATE_UNKNOWN):
+            return None
+        return st.state.lower() in ("on", "true", "1", "heating", "dhw", "hot_water", "hot water")
+
     def _refresh_burner(self, now: float, initial: bool = False) -> None:
         st = self.hass.states.get(self.cfg[CONF_BURNER])
         demand = self._is_burner_on(st)
@@ -658,6 +746,13 @@ class BoilerMonitor:
             else:
                 self._flame_na_since = None
             on = demand and flame
+        dhw = self._dhw_on()
+        if dhw:
+            # Domestic hot water is not space heating: not a burn, not a cycle.
+            on = False
+        if self.dhw_active and not dhw:
+            self._dhw_ended = now
+        self.dhw_active = bool(dhw)
         prev = self.burner_on
         self.burner_on = on
         self.demand_on = demand
@@ -665,8 +760,10 @@ class BoilerMonitor:
             return
         self._update_demand(now, demand, partial=initial or not was_available)
         if on and self._open_cycle() is None:
-            # Coming back already on: the real start was not observed.
-            self._start_cycle(now, partial=initial or not was_available)
+            # Coming back already on: the real start was not observed. Right
+            # after hot water the flame may simply have stayed on: not a new start.
+            after_dhw = self._dhw_ended is not None and now - self._dhw_ended < 60
+            self._start_cycle(now, partial=initial or not was_available or after_dhw)
         elif not on and self._open_cycle() is not None and (prev or initial):
             self._stop_cycle(now)
 
@@ -890,7 +987,7 @@ class BoilerMonitor:
         @callback
         def _infer(_now: datetime) -> None:
             self._infer_unsub = None
-            if not (self.season_active and self.demand_on and self.burner_available):
+            if not (self.season_active and self.demand_on and self.burner_available) or self.dhw_active:
                 return
             if self.burner_on or self._open_cycle() is not None:
                 return
@@ -1044,6 +1141,15 @@ class BoilerMonitor:
             _add(b, "out_n", 1)
         burning = self.burner_on and self._open_cycle() is not None
         if burning:
+            mod = self.modulation()
+            if mod is not None:
+                _add(b, "mod_sum", mod)
+                _add(b, "mod_n", 1)
+                if mod <= MOD_LOW_PCT:
+                    _add(b, "mod_low_n", 1)
+            pw = self.heat_power()
+            if pw:
+                _add(b, "kwh", pw * dt / 3600)
             ret = self.return_temp()
             if ret is not None:
                 b["smp_s"] = b.get("smp_s", 0.0) + dt
@@ -1235,6 +1341,8 @@ class BoilerMonitor:
             return STATUS_OFF_SEASON
         if self.burner_on:
             return STATUS_HEATING
+        if self.dhw_active:
+            return STATUS_DHW
         if self.has_flame and self.demand_on:
             return STATUS_DEMAND
         return STATUS_IDLE
@@ -1397,7 +1505,32 @@ class BoilerMonitor:
             "starts_per_demand_hour": _r(n_starts / (dem_24 / 3600), 1) if dem_24 >= 1800 else None,
             "inferred_starts_24h": sum(1 for c in win if c.get("inferred")),
             "burn_per_hdd": hdd,
+            **self._extra_stats(now, h_start, today_start),
         }
+
+    def _extra_stats(self, now: float, h_start: float, today_start: float) -> dict[str, Any]:
+        """Statistics from the optional sources: modulation / power, counters, gas."""
+        out: dict[str, Any] = {}
+        if self.cfg.get(CONF_MODULATION):
+            n = self._sum_hours(h_start, now + 1, "mod_n")
+            out["modulation"] = _r(self.modulation(), 0)
+            out["modulation_avg_24h"] = _r(self._sum_hours(h_start, now + 1, "mod_sum") / n, 0) if n else None
+            out["modulation_low_24h"] = _r(100 * self._sum_hours(h_start, now + 1, "mod_low_n") / n, 0) if n else None
+        if self.has_power:
+            out["heat_power_kw"] = _r(self.heat_power(), 1)
+            out["energy_today_kwh"] = round(self._sum_hours(_hour_key(today_start), now + 1, "kwh"), 2)
+            out["energy_per_hdd"] = self.burn_per_hdd(7, "kwh")
+        if self.cfg.get(CONF_STARTS):
+            c24 = self._sum_hours(h_start, now + 1, "cnt")
+            dem = self._demand_seconds(now - 86400, now)
+            out["boiler_starts_today"] = int(self._sum_hours(_hour_key(today_start), now + 1, "cnt"))
+            out["boiler_starts_24h"] = int(c24)
+            # per hour of heat demand when it is known, else per hour of the day
+            out["boiler_starts_per_hour"] = _r(c24 / (dem / 3600), 1) if dem >= 1800 else _r(c24 / 24, 2)
+        if self.cfg.get(CONF_GAS):
+            out["gas_today"] = round(self._sum_hours(_hour_key(today_start), now + 1, "gas"), 3)
+            out["gas_per_hdd"] = self.burn_per_hdd(7, "gas")
+        return out
 
     def earliest_ts(self) -> float | None:
         cands = []
@@ -1424,7 +1557,10 @@ class BoilerMonitor:
                 {
                     "date": d,
                     "burn_h": round(a["burn_s"] / 3600, 2),
-                "demand_h": round(a["dem_s"] / 3600, 2),
+                    "demand_h": round(a["dem_s"] / 3600, 2),
+                    "kwh": round(a["kwh"], 2),
+                    "gas": round(a["gas"], 3),
+                    "starts": int(a["cnt"]),
                     "cycles": int(a["cycles"]),
                     "short": int(a["short"]),
                     "outdoor": _r(a["out_sum"] / a["out_n"]) if a["out_n"] else None,
@@ -1447,9 +1583,23 @@ class BoilerMonitor:
             if d["date"] != today and d["outdoor"] is not None and d["samples_ok"] >= 20 * 60 * 60 / SAMPLE_INTERVAL_SECONDS
         ]
 
+    @property
+    def daily_metric(self) -> str:
+        """What a day's heating is measured in: kWh with modulation + power, else burn hours."""
+        return "kwh" if self.has_power else "burn_h"
+
     def regression(self, days: int = 30) -> dict[str, float] | None:
-        """Linear fit burn_h = a + b*outdoor over complete days."""
-        pts = [(d["outdoor"], d["burn_h"]) for d in self._complete_days(days)]
+        """Linear fit heat = a + b*outdoor over complete days (heat: kWh or burn hours)."""
+        metric = self.daily_metric
+        ds = self._complete_days(days)
+        if metric != "burn_h":
+            # days from before the energy source was configured have no kWh
+            measured = [d for d in ds if self._measured(d, metric)]
+            if len(measured) >= 3:
+                ds = measured
+            else:
+                metric = "burn_h"
+        pts = [(d["outdoor"], d[metric]) for d in ds]
         if len(pts) < 3:
             return None
         n = len(pts)
@@ -1463,10 +1613,12 @@ class BoilerMonitor:
         a = my - b * mx
         syy = sum((p[1] - my) ** 2 for p in pts)
         r2 = (sxy * sxy) / (sxx * syy) if syy > 0 else 0.0
-        res: dict[str, Any] = {"slope": round(b, 3), "intercept": round(a, 3), "r2": round(r2, 2), "n": n}
+        res: dict[str, Any] = {"slope": round(b, 3), "intercept": round(a, 3), "r2": round(r2, 2), "n": n, "metric": metric}
         # A nearly flat or noisy line crosses zero anywhere (258 °C, -40 °C...):
         # only report a balance point the data can actually support.
-        burn_days = sum(1 for p in pts if p[1] >= BP_MIN_BURN_H)
+        # a "day with burn": 15 min, or the energy of 15 min at ~10 kW
+        min_day = BP_MIN_BURN_H if metric == "burn_h" else BP_MIN_BURN_H * 10
+        burn_days = sum(1 for p in pts if p[1] >= min_day)
         if n < BP_MIN_DAYS or burn_days < BP_MIN_BURN_DAYS:
             res["balance_reason"] = "few_days"
         elif b >= 0 or r2 < BP_MIN_R2:
@@ -1477,11 +1629,20 @@ class BoilerMonitor:
             res["balance_point"] = round(-a / b, 1)
         return res
 
-    def burn_per_hdd(self, days: int = 7) -> float | None:
+    @staticmethod
+    def _measured(day: dict[str, Any], field: str) -> bool:
+        """A day counts for kWh/gas only if the source was recording it:
+        a day with burning but zero energy/gas predates the source."""
+        return day.get(field, 0) > 0 or day.get("burn_h", 0) < 0.05
+
+    def burn_per_hdd(self, days: int = 7, field: str = "burn_h") -> float | None:
+        """Heating (burn hours, kWh or gas) per heating degree-day, last full days."""
         ds = self._complete_days(days + 1)[-days:]
+        if field != "burn_h":
+            ds = [d for d in ds if self._measured(d, field)]
         hdd = sum(max(0.0, HDD_BASE - d["outdoor"]) for d in ds)
-        burn = sum(d["burn_h"] for d in ds)
-        return round(burn / hdd, 3) if hdd >= 1 else None
+        used = sum(d[field] for d in ds)
+        return round(used / hdd, 3) if hdd >= 1 else None
 
     def timeline(self, hours: int = 24) -> list[list[Any]]:
         now = dt_util.utcnow().timestamp()

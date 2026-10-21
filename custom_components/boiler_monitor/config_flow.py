@@ -13,6 +13,13 @@ from .const import (
     CONF_BURNER,
     CONF_BURNER_ON_STATE,
     CONF_CSV_LOG,
+    CONF_DHW,
+    CONF_GAS,
+    CONF_MODULATION,
+    CONF_POWER_MAX,
+    CONF_POWER_MIN,
+    CONF_STARTS,
+    CONF_THERMOREG_STATE,
     CONF_EFFECT_DELAY_MIN,
     CONF_FLAME,
     CONF_FLOW_SETPOINT,
@@ -94,12 +101,23 @@ def entities_schema(src: dict[str, Any], with_name: bool) -> vol.Schema:
             _opt(CONF_RETURN_TEMP, src): TEMP_SENSOR,
             _opt(CONF_FLOW_SETPOINT, src): TEMP_SENSOR,
             _opt(CONF_THERMOREG, src): sel.EntitySelector(
-                sel.EntitySelectorConfig(domain=["switch", "binary_sensor", "input_boolean"])
+                sel.EntitySelectorConfig(
+                    domain=["switch", "binary_sensor", "input_boolean", "select", "input_select", "sensor"]
+                )
             ),
+            _opt(CONF_THERMOREG_STATE, src): sel.TextSelector(),
             _opt(CONF_THERMOSTAT, src): sel.EntitySelector(sel.EntitySelectorConfig(domain="climate")),
             _opt(CONF_PRESSURE, src): sel.EntitySelector(
                 sel.EntitySelectorConfig(domain="sensor", device_class="pressure")
             ),
+            _opt(CONF_DHW, src): sel.EntitySelector(
+                sel.EntitySelectorConfig(domain=["binary_sensor", "switch", "input_boolean", "sensor"])
+            ),
+            _opt(CONF_MODULATION, src): sel.EntitySelector(sel.EntitySelectorConfig(domain="sensor")),
+            _opt(CONF_POWER_MAX, src): _num(0, 100, 0.1, "kW"),
+            _opt(CONF_POWER_MIN, src): _num(0, 100, 0.1, "kW"),
+            _opt(CONF_STARTS, src): sel.EntitySelector(sel.EntitySelectorConfig(domain="sensor")),
+            _opt(CONF_GAS, src): sel.EntitySelector(sel.EntitySelectorConfig(domain="sensor")),
             _opt(CONF_SEASON_ENTITY, src): sel.EntitySelector(sel.EntitySelectorConfig()),
             vol.Optional(
                 CONF_SEASON_STATE, default=src.get(CONF_SEASON_STATE, DEFAULT_SEASON_STATE)

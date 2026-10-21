@@ -1078,3 +1078,159 @@ async def test_typical_pause_ignores_the_night(hass: HomeAssistant, freezer):
     s = st(hass, "sensor.centrala_status").attributes["stats"]
     assert s["avg_off_min"] == pytest.approx(6, abs=0.2)
     assert s["avg_burn_min"] == pytest.approx(3, abs=0.2)
+
+
+# ---------------------------------------------------------------- 1.9.0: optional boiler data
+DHW = "binary_sensor.ariston_dhw"
+MOD = "sensor.ariston_modulation"
+STARTS = "sensor.boiler_burner_starts"
+GAS = "sensor.gas_meter"
+
+
+async def test_dhw_flame_is_not_heating(hass: HomeAssistant, freezer):
+    """A DHW entity: burner on while hot water is active is not a heating burn."""
+    freezer.move_to("2026-11-10 08:00:30+02:00")
+    temps(hass)
+    hass.states.async_set(DHW, "off")
+    await burner(hass, False)
+    await setup(hass, {**DATA, "dhw_entity": DHW}, {**OPTIONS, "notify_service": ""})
+    hass.states.async_set(DHW, "on")
+    await burner(hass, True)
+    await advance(hass, freezer, 6)
+    assert st(hass, "sensor.centrala_status").state == "hot_water"
+    assert st(hass, "sensor.centrala_cycles_today").state == "0"
+    hass.states.async_set(DHW, "off")
+    await burner(hass, False)
+    await advance(hass, freezer, 10)
+    # a real heating burn afterwards is counted
+    await burner(hass, True)
+    assert st(hass, "sensor.centrala_status").state == "heating"
+    await advance(hass, freezer, 15)
+    await burner(hass, False)
+    assert st(hass, "sensor.centrala_cycles_today").state == "1"
+    s = st(hass, "sensor.centrala_status").attributes["stats"]
+    assert s["burn_hours_today"] == pytest.approx(0.25, abs=0.02)
+
+
+async def test_modulation_power_and_energy(hass: HomeAssistant, freezer):
+    freezer.move_to("2026-11-10 08:00:30+02:00")
+    temps(hass)
+    hass.states.async_set(MOD, 50, {"unit_of_measurement": "%"})
+    await burner(hass, False)
+    data = {**DATA, "modulation_entity": MOD, "max_power_kw": 24, "min_power_kw": 4}
+    await setup(hass, data, {**OPTIONS, "notify_service": ""})
+    await burner(hass, True)
+    await advance(hass, freezer, 30)          # 12 kW for 30 min = 6 kWh
+    hass.states.async_set(MOD, 5)             # below minimum -> 4 kW (pmin)
+    await advance(hass, freezer, 30)          # 4 kW for 30 min = 2 kWh
+    s = st(hass, "sensor.centrala_status").attributes["stats"]
+    assert s["heat_power_kw"] == pytest.approx(4.0)
+    assert s["energy_today_kwh"] == pytest.approx(8.0, abs=0.5)
+    assert s["modulation_avg_24h"] == pytest.approx(27.5, abs=3)
+    assert s["modulation_low_24h"] == pytest.approx(50, abs=5)
+    assert float(st(hass, "sensor.centrala_heat_energy_today").state) == pytest.approx(8.0, abs=0.5)
+    await burner(hass, False)
+    assert st(hass, "sensor.centrala_status").attributes["stats"]["heat_power_kw"] == 0
+    assert st(hass, "sensor.centrala_status").attributes["sources"]["power"] is True
+
+
+async def test_starts_counter_and_reset(hass: HomeAssistant, freezer):
+    freezer.move_to("2026-11-10 08:00:30+02:00")
+    temps(hass)
+    hass.states.async_set(STARTS, 1000)
+    await burner(hass, False)
+    await setup(hass, {**DATA, "burner_starts_entity": STARTS}, {**OPTIONS, "notify_service": ""})
+    await burner(hass, True)
+    for v in (1003, 1007):
+        await advance(hass, freezer, 30)
+        hass.states.async_set(STARTS, v)
+        await hass.async_block_till_done()
+    hass.states.async_set(STARTS, 2)          # counter replaced / reset
+    await hass.async_block_till_done()
+    hass.states.async_set(STARTS, 5)
+    await hass.async_block_till_done()
+    s = st(hass, "sensor.centrala_status").attributes["stats"]
+    assert s["boiler_starts_today"] == 10     # 3 + 4 + (reset ignored) + 3
+    assert s["boiler_starts_per_hour"] == pytest.approx(10, abs=0.5)  # one hour of demand
+    assert st(hass, "sensor.centrala_boiler_starts_today").state == "10"
+
+
+async def test_gas_meter_and_per_degree_day(hass: HomeAssistant, freezer):
+    freezer.move_to("2026-11-10 00:00:30+02:00")
+    temps(hass, out=5)
+    hass.states.async_set(GAS, 100.0, {"unit_of_measurement": "m³", "state_class": "total_increasing"})
+    await burner(hass, False)
+    await setup(hass, {**DATA, "gas_entity": GAS}, {**OPTIONS, "notify_service": ""})
+    gas = 100.0
+    for _day in range(2):
+        for _h in range(24):
+            await burner(hass, True)
+            await advance(hass, freezer, 15)
+            gas += 0.1
+            hass.states.async_set(GAS, round(gas, 3), {"unit_of_measurement": "m³"})
+            await burner(hass, False)
+            await advance(hass, freezer, 45)
+    attrs = st(hass, "sensor.centrala_status").attributes
+    s = attrs["stats"]
+    assert s["gas_today"] is not None
+    assert sum(d["gas"] for d in attrs["daily"]) == pytest.approx(4.8, abs=0.05)
+    # every full day: 2.4 m³ at 5 °C outdoor
+    from custom_components.boiler_monitor.monitor import HDD_BASE
+    assert s["gas_per_hdd"] == pytest.approx(2.4 / (HDD_BASE - 5), rel=0.05)
+    assert attrs["source_units"]["gas"] == "m³"
+    assert st(hass, "sensor.centrala_gas_per_degree_day_7d").attributes["unit_of_measurement"] == "m³/°C·day"
+
+
+async def test_numeric_burner_threshold(hass: HomeAssistant, freezer):
+    """burner_on_state '>60' on a power sensor in W."""
+    freezer.move_to("2026-11-10 08:00:30+02:00")
+    temps(hass)
+    plug = "sensor.priza_centrala_power"
+    hass.states.async_set(plug, 8)
+    await setup(hass, {**DATA, "burner_entity": plug, "burner_on_state": ">60"}, {**OPTIONS, "notify_service": ""})
+    assert st(hass, "sensor.centrala_status").state == "idle"
+    hass.states.async_set(plug, 95)
+    await hass.async_block_till_done()
+    assert st(hass, "sensor.centrala_status").state == "heating"
+    await advance(hass, freezer, 12)
+    hass.states.async_set(plug, 10)
+    await hass.async_block_till_done()
+    assert st(hass, "sensor.centrala_cycles_today").state == "1"
+
+
+async def test_thermoregulation_from_select(hass: HomeAssistant, freezer):
+    freezer.move_to("2026-11-10 08:00:30+02:00")
+    temps(hass)
+    sel_ent = "select.boiler_heating_mode"
+    hass.states.async_set(sel_ent, "manual")
+    await burner(hass, False)
+    data = {**DATA, "thermoregulation_entity": sel_ent, "thermoregulation_on_state": "Weather"}
+    await setup(hass, data, {**OPTIONS, "notify_service": ""})
+    assert st(hass, "sensor.centrala_regulation_mode").state == "fixed"
+    hass.states.async_set(sel_ent, "weather")
+    await hass.async_block_till_done()
+    await advance(hass, freezer, 1)
+    assert st(hass, "sensor.centrala_regulation_mode").state == "weather_compensation"
+
+
+async def test_regression_uses_energy_when_power_known(hass: HomeAssistant, freezer):
+    freezer.move_to("2026-11-10 00:00:30+02:00")
+    temps(hass)
+    hass.states.async_set(MOD, 50)
+    await burner(hass, False)
+    data = {**DATA, "modulation_entity": MOD, "max_power_kw": 20}
+    await setup(hass, data, {**OPTIONS, "notify_service": ""})
+    for out, burn_per_h in [(0, 30), (5, 20), (10, 10), (2, 26), (8, 14)]:
+        temps(hass, out=out)
+        for _h in range(24):
+            await burner(hass, True)
+            await advance(hass, freezer, burn_per_h)
+            await burner(hass, False)
+            await advance(hass, freezer, 60 - burn_per_h)
+    attrs = st(hass, "sensor.centrala_status").attributes
+    reg = attrs["regression"]
+    assert reg["metric"] == "kwh"
+    # 10 kW x burn hours: -0.8 h/day per °C -> -8 kWh/day per °C
+    assert reg["slope"] == pytest.approx(-8, abs=1)
+    assert reg["balance_point"] == pytest.approx(15, abs=1)
+    assert attrs["stats"]["energy_per_hdd"] is not None

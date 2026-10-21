@@ -91,7 +91,7 @@ The card is registered automatically, so you don't need to add a dashboard resou
 |---|---|---|
 | Name | ✅ | Used for entity IDs (`sensor.<name>_status`…) |
 | Burner / heat-demand entity | ✅ | `switch`, `binary_sensor`, `input_boolean`, `climate` or `sensor` |
-| State meaning "burner on" | ✅ | `on` for switches and binary sensors. For a **climate** entity, the `hvac_action` value (`heating`). For a text sensor, the exact state string |
+| State meaning "burner on" | ✅ | `on` for switches and binary sensors. For a **climate** entity, the `hvac_action` value (`heating`). For a text sensor, the exact state string. For a **numeric** sensor, a threshold: `>60` = on above 60 (e.g. a smart plug's power in W), `<5` = on below 5 |
 | Indoor temperature sensors | ✅ | One or more; their average is the room temperature |
 | Outdoor temperature sensor | ✅ *or weather* | Outside air temperature. If both this and a weather entity are set, this sensor wins |
 | Weather entity | ✅ *or outdoor sensor* | Without an outdoor sensor, its current temperature is the outdoor temperature. With an hourly forecast (e.g. Tomorrow.io), `estimate_preheat` also uses the forecast |
@@ -99,9 +99,15 @@ The card is registered automatically, so you don't need to add a dashboard resou
 | Flow temperature sensor | – | Enables ΔT |
 | Return temperature sensor | – | Enables condensing ratio and the condensation-lost alert |
 | Flow target / setpoint sensor | – | The flow temperature the boiler aims for (e.g. Ariston *CH flow setpoint temp*). Enables flow-vs-target and the heating-curve chart |
-| Automatic thermoregulation entity | – | Switch that turns weather compensation on/off (e.g. Ariston *automatic thermoregulation*). ON = curve, OFF = fixed flow. The card adapts to it |
+| Automatic thermoregulation entity | – | Switch that turns weather compensation on/off (e.g. Ariston *automatic thermoregulation*). ON = curve, OFF = fixed flow. The card adapts to it. A `select` or text sensor works too |
+| State meaning "thermoregulation on" | – | Only for a `select` / sensor: the option that means weather compensation, e.g. `auto` or `weather`. Empty = `on` |
 | Room thermostat (climate) | – | The climate entity that decides when to heat (e.g. a Generic Thermostat). Its target temperature is the comfort reference. Enables the comfort verdict and the pre-heat time |
 | Heating circuit pressure sensor | – | In bar (e.g. Ariston *heating circuit pressure*). Enables the pressure alert and the 7-day trend |
+| Domestic hot water active | – | On while the boiler heats hot water (e.g. OpenTherm *DHW active*, ems-esp, ebusd). That burner time is not counted as heating and the status shows `hot_water` |
+| Modulation sensor | – | Burner modulation in % (e.g. OpenTherm *relative modulation level*) |
+| Maximum / minimum heating power | – | kW from the data plate (e.g. 24 / 3.5). With modulation: heat power and energy in kWh |
+| Burner-starts counter | – | The boiler's own count of burner starts. More accurate than counting the relay |
+| Gas meter | – | A total-increasing meter in m³ or kWh. A reset of the meter is ignored |
 | Heating-season entity / state | – | e.g. `input_boolean.heating_season` = `on`, `climate.x` = `heat`, or an `input_select` option. Leave it empty to monitor all year |
 
 The form refuses to save without the required fields. Entries created with an older version keep working; ⋮ → **Reconfigure** asks for the missing ones the next time you open it.
@@ -119,6 +125,13 @@ Leave a sensor empty and the reports that depend on it are not created at all �
 | Automatic thermoregulation | regulation mode | curve vs fixed mode on the chart |
 | Room thermostat | comfort verdict, comfort gap, pre-heat time | Comfort vs outdoor |
 | Pressure | pressure change 7 d, *Pressure problem* | Pressure |
+| Hot water active | status `hot_water`; hot-water burns are not heating cycles | blue *Hot water* status |
+| Modulation | modulation, average modulation 24 h, time at minimum 24 h | *Energy* group |
+| Modulation + max power | heat power, heat energy today, energy per degree-day; the balance point is fitted on **kWh** instead of burn hours | *Energy* group, *Energy vs outdoor* chart, kWh in the day tooltips |
+| Burner-starts counter | boiler starts today, boiler starts per demand hour | *Ignitions* pill uses the boiler's own count |
+| Gas meter | gas today, gas per degree-day (unit follows the meter) | *Gas* group, gas in the day tooltips |
+
+Days recorded before an energy or gas source was added are left out of the kWh/gas averages, so adding one later does not skew them.
 
 
 > **Which burner entity should I pick?**
@@ -141,7 +154,7 @@ With both entities set:
 - **Warm-up time** and the **heating-effect check** use the demand: they are about the house, not about how the boiler spreads the heat.
 - **Missed ignitions.** Cloud flame sensors (Ariston, …) are polled about once a minute and miss burns of a minute or less. If a flow sensor is set, a jump of ≥ 4 °C in the flow temperature during demand, with no flame reported in the last 2 minutes, is counted as a 1-minute burn. These show lighter on the timeline and are counted in `inferred_starts_24h`.
 - If the flame sensor is unavailable (e.g. the cloud integration still loading after a restart), nothing is counted as burn for the first 10 minutes; after that the relay is used alone until the flame sensor comes back.
-- Hot water drawn while the relay is on cannot be told apart from heating and is counted as burn.
+- Hot water drawn while the relay is on cannot be told apart from heating and is counted as burn, unless a **hot-water entity** is set.
 - Statistics recorded before the flame sensor was added stay as they were (relay time). Use the `reset_statistics` action for a clean start.
 
 ### Step 2: tuning (⋮ → **Configure**)
@@ -167,7 +180,7 @@ All entities belong to one device named after your integration. The examples use
 
 | Entity | Unit | Description |
 |---|---|---|
-| `sensor.centrala_status` | – | `heating` / `demand` (flame sensor set: heat demand, flame off) / `idle` / `off_season` / `unavailable`. Its attributes carry everything the card needs |
+| `sensor.centrala_status` | – | `heating` / `demand` (flame sensor set: heat demand, flame off) / `hot_water` (hot-water entity set) / `idle` / `off_season` / `unavailable`. Its attributes carry everything the card needs |
 | `sensor.centrala_cycles_today` | cycles | Burner starts since local midnight |
 | `sensor.centrala_short_cycles_today` | cycles | Of which short cycles |
 | `sensor.centrala_cycles_per_hour_24h` | cycles/h | Rolling 24 h |
@@ -192,6 +205,12 @@ All entities belong to one device named after your integration. The examples use
 | `sensor.centrala_comfort_gap_24h` | °C | Average of rooms − thermostat target over the last 24 steady hours *(needs thermostat)* |
 | `sensor.centrala_heat_up_time_per_degc` | min/°C | How long the house needs to warm up by 1 °C at the current outdoor temperature *(needs indoor sensors or thermostat)* |
 | `sensor.centrala_pre_heat_time` | min | How long it would take, from now, to reach the thermostat target *(needs thermostat)* |
+| `sensor.centrala_modulation` · `_average_modulation_24h` · `_time_at_minimum_modulation_24h` | % | Live modulation, its average while burning, and the share of burn time at ≤ 10 % *(needs modulation)* |
+| `sensor.centrala_heat_power` | kW | max power × modulation, never below the minimum power; 0 when not burning *(needs modulation + max power)* |
+| `sensor.centrala_heat_energy_today` | kWh | Heat produced since midnight, `total_increasing` *(needs modulation + max power)* |
+| `sensor.centrala_heat_energy_per_degree_day_7d` | kWh/°C·day | *(needs modulation + max power + outdoor)* |
+| `sensor.centrala_boiler_starts_today` · `_boiler_starts_per_demand_hour` | starts | From the boiler's counter *(needs starts counter)* |
+| `sensor.centrala_gas_today` · `_gas_per_degree_day_7d` | m³ (meter unit) | *(needs gas meter; per degree-day also outdoor)* |
 
 ### Binary sensors
 

@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 DOMAIN = "boiler_monitor"
-VERSION = "1.8.0"
+VERSION = "1.9.0"
 
 # Config (entities) — set in config flow
 CONF_NAME = "name"
@@ -20,6 +20,13 @@ CONF_PRESSURE = "pressure_entity"
 CONF_THERMOSTAT = "thermostat_entity"
 CONF_WEATHER = "weather_entity"
 CONF_FLAME = "flame_entity"
+CONF_DHW = "dhw_entity"  # on while the boiler makes domestic hot water
+CONF_MODULATION = "modulation_entity"  # burner modulation, %
+CONF_POWER_MAX = "max_power_kw"  # heat output at 100 % modulation, kW
+CONF_POWER_MIN = "min_power_kw"  # heat output at the lowest modulation, kW
+CONF_STARTS = "burner_starts_entity"  # the boiler's own ignition counter
+CONF_GAS = "gas_entity"  # gas meter (total increasing), m³ or kWh
+CONF_THERMOREG_STATE = "thermoregulation_on_state"
 # pseudo-key: an outdoor sensor OR a weather entity
 HAS_OUTDOOR = "_outdoor"
 
@@ -65,6 +72,9 @@ FLAME_INFER_GUARD_S = 120  # ignore jumps this soon after a reported flame
 # burn at first, fall back to the demand only after this long.
 FLAME_NA_FALLBACK_S = 600
 
+# Modulation at or below this is "running at minimum"
+MOD_LOW_PCT = 10.0
+
 # Retention
 CYCLE_RETENTION_HOURS = 7 * 24
 DAILY_RETENTION_DAYS = 60
@@ -88,6 +98,7 @@ SIGNAL_UPDATE = f"{DOMAIN}_update_{{}}"
 STATUS_HEATING = "heating"
 STATUS_IDLE = "idle"
 STATUS_DEMAND = "demand"  # heat demand, flame off (flame entity configured)
+STATUS_DHW = "hot_water"  # the boiler is making domestic hot water (DHW entity configured)
 STATUS_OFF_SEASON = "off_season"
 STATUS_UNAVAILABLE = "unavailable"
 

@@ -10,14 +10,19 @@ from homeassistant.components.sensor import (
     SensorEntityDescription,
     SensorStateClass,
 )
-from homeassistant.const import PERCENTAGE, UnitOfPressure, UnitOfTemperature, UnitOfTime
+from homeassistant.const import PERCENTAGE, UnitOfEnergy, UnitOfPower, UnitOfPressure, UnitOfTemperature, UnitOfTime
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import (
+    CONF_DHW,
     CONF_FLAME,
     CONF_FLOW_SETPOINT,
+    CONF_GAS,
+    CONF_MODULATION,
+    CONF_POWER_MAX,
+    CONF_STARTS,
     CONF_FLOW_TEMP,
     CONF_INDOOR_TEMPS,
     CONF_PRESSURE,
@@ -30,6 +35,7 @@ from .const import (
     MODE_CURVE,
     MODE_FIXED,
     STATUS_DEMAND,
+    STATUS_DHW,
     STATUS_HEATING,
     STATUS_IDLE,
     STATUS_OFF_SEASON,
@@ -57,6 +63,16 @@ SENSORS: tuple[BoilerSensorDescription, ...] = (
     BoilerSensorDescription(key="duty_cycle", stat="duty_cycle", translation_key="duty_cycle", icon="mdi:percent", state_class=M, native_unit_of_measurement=PERCENTAGE, suggested_display_precision=1),
     BoilerSensorDescription(key="burn_time_today", stat="burn_hours_today", translation_key="burn_time_today", icon="mdi:fire-circle", device_class=SensorDeviceClass.DURATION, state_class=SensorStateClass.TOTAL_INCREASING, native_unit_of_measurement=UnitOfTime.HOURS, suggested_display_precision=2),
     BoilerSensorDescription(key="demand_time_today", stat="demand_hours_today", translation_key="demand_time_today", icon="mdi:thermostat", device_class=SensorDeviceClass.DURATION, state_class=SensorStateClass.TOTAL_INCREASING, native_unit_of_measurement=UnitOfTime.HOURS, suggested_display_precision=2),
+    BoilerSensorDescription(key="heat_power", stat="heat_power_kw", translation_key="heat_power", icon="mdi:fire", device_class=SensorDeviceClass.POWER, state_class=M, native_unit_of_measurement=UnitOfPower.KILO_WATT, suggested_display_precision=1),
+    BoilerSensorDescription(key="energy_today", stat="energy_today_kwh", translation_key="energy_today", icon="mdi:radiator", device_class=SensorDeviceClass.ENERGY, state_class=SensorStateClass.TOTAL_INCREASING, native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR, suggested_display_precision=1),
+    BoilerSensorDescription(key="energy_per_hdd", stat="energy_per_hdd", translation_key="energy_per_hdd", icon="mdi:chart-line", state_class=M, native_unit_of_measurement="kWh/°C·day", suggested_display_precision=2),
+    BoilerSensorDescription(key="modulation", stat="modulation", translation_key="modulation", icon="mdi:tune-vertical", state_class=M, native_unit_of_measurement=PERCENTAGE, suggested_display_precision=0),
+    BoilerSensorDescription(key="modulation_avg", stat="modulation_avg_24h", translation_key="modulation_avg", icon="mdi:tune-vertical", state_class=M, native_unit_of_measurement=PERCENTAGE, suggested_display_precision=0),
+    BoilerSensorDescription(key="modulation_low", stat="modulation_low_24h", translation_key="modulation_low", icon="mdi:arrow-collapse-down", state_class=M, native_unit_of_measurement=PERCENTAGE, suggested_display_precision=0),
+    BoilerSensorDescription(key="boiler_starts_today", stat="boiler_starts_today", translation_key="boiler_starts_today", icon="mdi:counter", state_class=SensorStateClass.TOTAL_INCREASING, native_unit_of_measurement="starts"),
+    BoilerSensorDescription(key="boiler_starts_per_hour", stat="boiler_starts_per_hour", translation_key="boiler_starts_per_hour", icon="mdi:repeat", state_class=M, native_unit_of_measurement="starts/h", suggested_display_precision=1),
+    BoilerSensorDescription(key="gas_today", stat="gas_today", translation_key="gas_today", icon="mdi:meter-gas", state_class=SensorStateClass.TOTAL_INCREASING, suggested_display_precision=2),
+    BoilerSensorDescription(key="gas_per_hdd", stat="gas_per_hdd", translation_key="gas_per_hdd", icon="mdi:chart-line", state_class=M, suggested_display_precision=3),
     BoilerSensorDescription(key="flame_share", stat="flame_share", translation_key="flame_share", icon="mdi:fire-alert", state_class=M, native_unit_of_measurement=PERCENTAGE, suggested_display_precision=0),
     BoilerSensorDescription(key="starts_per_demand_hour", stat="starts_per_demand_hour", translation_key="starts_per_demand_hour", icon="mdi:fire-circle", state_class=M, native_unit_of_measurement="starts/h", suggested_display_precision=1),
     BoilerSensorDescription(key="condensing_ratio", stat="condensing_ratio", translation_key="condensing_ratio", icon="mdi:water-percent", state_class=M, native_unit_of_measurement=PERCENTAGE, suggested_display_precision=0),
@@ -79,12 +95,22 @@ STATUS_DESC = SensorEntityDescription(
     translation_key="status",
     icon="mdi:water-boiler",
     device_class=SensorDeviceClass.ENUM,
-    options=[STATUS_HEATING, STATUS_DEMAND, STATUS_IDLE, STATUS_OFF_SEASON, STATUS_UNAVAILABLE],
+    options=[STATUS_HEATING, STATUS_DEMAND, STATUS_DHW, STATUS_IDLE, STATUS_OFF_SEASON, STATUS_UNAVAILABLE],
 )
 
 # Needed by entities that don't depend on optional sensors
 REQUIRES: dict[str, tuple[str, ...]] = {
     "condensing_ratio": (CONF_RETURN_TEMP,),
+    "heat_power": (CONF_MODULATION, CONF_POWER_MAX),
+    "energy_today": (CONF_MODULATION, CONF_POWER_MAX),
+    "energy_per_hdd": (CONF_MODULATION, CONF_POWER_MAX, HAS_OUTDOOR),
+    "modulation": (CONF_MODULATION,),
+    "modulation_avg": (CONF_MODULATION,),
+    "modulation_low": (CONF_MODULATION,),
+    "boiler_starts_today": (CONF_STARTS,),
+    "boiler_starts_per_hour": (CONF_STARTS,),
+    "gas_today": (CONF_GAS,),
+    "gas_per_hdd": (CONF_GAS, HAS_OUTDOOR),
     "demand_time_today": (CONF_FLAME,),
     "flame_share": (CONF_FLAME,),
     "starts_per_demand_hour": (CONF_FLAME,),
@@ -127,6 +153,15 @@ class BoilerStatSensor(BoilerEntity, SensorEntity):
     @property
     def native_value(self) -> Any:
         return self.monitor.stats().get(self.entity_description.stat)
+
+    @property
+    def native_unit_of_measurement(self) -> str | None:
+        # gas follows the unit of the meter (m³, kWh, ft³ ...)
+        key = self.entity_description.key
+        if key in ("gas_today", "gas_per_hdd"):
+            unit = self.monitor.source_unit(CONF_GAS) or "m³"
+            return unit if key == "gas_today" else f"{unit}/°C·day"
+        return super().native_unit_of_measurement
 
     @property
     def extra_state_attributes(self) -> dict[str, Any] | None:
@@ -191,6 +226,11 @@ class BoilerStatusSensor(BoilerEntity, SensorEntity):
             "sources": {
                 "burner": cfg.get("burner_entity"),
                 "flame": cfg.get(CONF_FLAME),
+                "dhw": cfg.get(CONF_DHW),
+                "modulation": cfg.get(CONF_MODULATION),
+                "power": bool(m.has_power),
+                "starts": cfg.get(CONF_STARTS),
+                "gas": cfg.get(CONF_GAS),
                 "flow": cfg.get(CONF_FLOW_TEMP),
                 "return": cfg.get(CONF_RETURN_TEMP),
                 "outdoor": m.outdoor_source,
@@ -204,6 +244,7 @@ class BoilerStatusSensor(BoilerEntity, SensorEntity):
                 "flow": m.source_unit(CONF_FLOW_TEMP),
                 "return": m.source_unit(CONF_RETURN_TEMP),
                 "setpoint": m.source_unit(CONF_FLOW_SETPOINT),
+                "gas": m.source_unit(CONF_GAS),
             },
             "timeline": m.timeline(24),
             "demand_timeline": m.demand_timeline(24) if m.has_flame else [],
