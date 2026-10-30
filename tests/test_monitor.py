@@ -1234,3 +1234,36 @@ async def test_regression_uses_energy_when_power_known(hass: HomeAssistant, free
     assert reg["slope"] == pytest.approx(-8, abs=1)
     assert reg["balance_point"] == pytest.approx(15, abs=1)
     assert attrs["stats"]["energy_per_hdd"] is not None
+
+
+async def test_heating_rate_survives_restart(hass: HomeAssistant, freezer):
+    freezer.move_to("2026-11-10 08:00:00+02:00")
+    temps(hass, out=0, liv=20.0, dor=20.0)
+    await burner(hass, False)
+    entry = await setup(hass, DATA, {**OPTIONS, "notify_service": ""})
+    await burner(hass, True)
+    temps(hass, out=0, liv=20.6, dor=20.6)
+    await advance(hass, freezer, 46)
+    rate = float(st(hass, "sensor.centrala_heating_rate").state)
+    assert rate == pytest.approx(0.8, abs=0.02)  # +0.6 °C in 45 min
+    await burner(hass, False)
+    assert await hass.config_entries.async_reload(entry.entry_id)
+    await hass.async_block_till_done()
+    assert float(st(hass, "sensor.centrala_heating_rate").state) == rate
+    # a cycle at 0 °C outdoor keeps its outdoor temperature in the store
+    m = entry.runtime_data
+    assert m.cycles[-1]["outdoor"] == 0
+
+
+async def test_heating_rate_restored_from_old_store(hass: HomeAssistant, freezer):
+    """Stores from before 1.9.1 have no rate: take it from the last checked cycle."""
+    freezer.move_to("2026-11-10 08:00:00+02:00")
+    temps(hass)
+    await burner(hass, False)
+    entry = await setup(hass, DATA, {**OPTIONS, "notify_service": ""})
+    m = entry.runtime_data
+    now = dt_util.utcnow().timestamp()
+    m.cycles = [{"start": now - 7200, "end": now - 3600, "rise": 0.45, "indoor_start": 20.0}]
+    m.last_heating_rate = None
+    m._restore_effect(None)
+    assert m.last_heating_rate == pytest.approx(0.6)  # 0.45 °C over the 45 min check

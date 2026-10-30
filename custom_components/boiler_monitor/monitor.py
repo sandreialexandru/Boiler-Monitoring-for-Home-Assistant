@@ -153,10 +153,15 @@ def _to_bar(v: float | None, unit: str | None) -> float | None:
     return v * _PRESSURE_TO_BAR.get(unit.strip().lower(), 1.0)
 
 
-def _compact(obj: Any) -> Any:
-    """Smaller store file: floats rounded, zero counters left out (restored on load)."""
+def _compact(obj: Any, drop_zero: bool = False) -> Any:
+    """Smaller store file: floats rounded; with drop_zero, zero counters left out
+    (only for hour buckets, which are merged with an empty bucket on load)."""
     if isinstance(obj, dict):
-        return {k: _compact(v) for k, v in obj.items() if not (isinstance(v, (int, float)) and not isinstance(v, bool) and v == 0)}
+        return {
+            k: _compact(v)
+            for k, v in obj.items()
+            if not (drop_zero and isinstance(v, (int, float)) and not isinstance(v, bool) and v == 0)
+        }
     if isinstance(obj, list):
         return [_compact(v) for v in obj]
     if isinstance(obj, float):
@@ -296,6 +301,7 @@ class BoilerMonitor:
         self.heatups = data.get("heatups", [])
         self.demands = data.get("demands", [])
         self.counters = data.get("counters", {})
+        self._restore_effect(data.get("effect"))
         last_saved = data.get("saved_at")
 
         now = dt_util.utcnow().timestamp()
@@ -380,11 +386,12 @@ class BoilerMonitor:
     def _data_to_save(self) -> dict[str, Any]:
         return {
             "cycles": [_compact(c) for c in self.cycles],
-            "hours": {str(k): _compact(v) for k, v in self.hours.items()},
+            "hours": {str(k): _compact(v, drop_zero=True) for k, v in self.hours.items()},
             "last_alert": self.last_alert,
             "heatups": self.heatups,
             "demands": self.demands,
             "counters": self.counters,
+            "effect": {"rate": self.last_heating_rate, "rise": self.last_rise},
             "saved_at": dt_util.utcnow().timestamp(),
         }
 
@@ -1008,6 +1015,22 @@ class BoilerMonitor:
 
         return _infer
 
+    def _restore_effect(self, saved: dict[str, Any] | None) -> None:
+        """Last measured room warming rate, so a restart does not blank it."""
+        if saved and saved.get("rate") is not None:
+            self.last_heating_rate = saved["rate"]
+            self.last_rise = saved.get("rise")
+            return
+        # stores written before 1.9.1: take it from the last checked cycle
+        delay_h = float(self._opt(CONF_EFFECT_DELAY_MIN, DEFAULT_EFFECT_DELAY_MIN)) / 60
+        for c in reversed(self.cycles):
+            if c.get("rate") is not None or c.get("rise") is not None:
+                self.last_rise = c.get("rise")
+                self.last_heating_rate = c.get("rate")
+                if self.last_heating_rate is None and delay_h > 0:
+                    self.last_heating_rate = round(c["rise"] / delay_h, 2)
+                return
+
     def _make_effect_check(self, cycle: dict[str, Any], started: float) -> Callable:
         @callback
         def _check(_now: datetime) -> None:
@@ -1024,6 +1047,8 @@ class BoilerMonitor:
             self.last_rise = round(rise, 2)
             self.last_heating_rate = round(rise / hours, 2)
             cycle["rise"] = self.last_rise
+            cycle["rate"] = self.last_heating_rate
+            self._save()
             min_rise = float(self._opt(CONF_MIN_RISE, DEFAULT_MIN_RISE))
             # Only a burner that kept running says something about the rooms.
             # A short burn in mild weather, or rooms already at the setpoint,
