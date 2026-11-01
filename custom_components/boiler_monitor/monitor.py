@@ -109,6 +109,8 @@ _LOGGER = logging.getLogger(__name__)
 FLOW_SETTLE_S = 300  # ignore the first minutes of a burn for flow-vs-target
 EFFECT_MIN_DUTY = 0.5  # burner share of the check period needed to judge the heating effect
 CURVE_HOURS = 7 * 24
+# kWh per unit of a gas meter (natural gas, gross calorific value)
+GAS_KWH = {"kwh": 1.0, "wh": 0.001, "mwh": 1000.0, "m³": 10.55, "m3": 10.55, "ft³": 0.2988, "ft3": 0.2988, "ccf": 29.88}
 HDD_BASE = 18.0  # °C, base temperature for heating degree-days
 # The balance point is only shown when the line really says something:
 BP_MIN_DAYS = 4  # complete days in the fit
@@ -247,6 +249,8 @@ class BoilerMonitor:
         self.condensation_lost = False
         self.heating_ineffective = False
         self.last_heating_rate: float | None = None
+        self.heat_loss_data: dict[str, Any] | None = None
+        self.curve_advice_data: dict[str, Any] | None = None
         self.last_rise: float | None = None
         self.season_active = True
         self.burner_on = False  # flame (or the burner entity when no flame entity is set)
@@ -1555,7 +1559,68 @@ class BoilerMonitor:
         if self.cfg.get(CONF_GAS):
             out["gas_today"] = round(self._sum_hours(_hour_key(today_start), now + 1, "gas"), 3)
             out["gas_per_hdd"] = self.burn_per_hdd(7, "gas")
+        self.heat_loss_data = self.heat_loss()
+        out["heat_loss_w_per_k"] = (self.heat_loss_data or {}).get("w_per_k")
+        self.curve_advice_data = self.curve_advice()
+        rec = (self.curve_advice_data or {}).get("recommended") or {}
+        out["recommended_flow_at_0"] = rec.get("at_0")
+        out["recommended_curve_slope"] = (
+            rec.get("slope") if (self.curve_advice_data or {}).get("slope_known") else None
+        )
         return out
+
+    # ------------------------------------------------------------- heat loss
+    @property
+    def energy_source(self) -> str | None:
+        """Where a day's heat in kWh comes from: measured power, or the gas meter."""
+        if self.has_power:
+            return "power"
+        if self.cfg.get(CONF_GAS) and self._gas_kwh_factor() is not None:
+            return "gas"
+        return None
+
+    def _gas_kwh_factor(self) -> float | None:
+        return GAS_KWH.get(str(self.source_unit(CONF_GAS) or "").strip().lower())
+
+    def heat_loss(self) -> dict[str, Any] | None:
+        """House heat loss in W per °C of indoor-outdoor difference."""
+        src = self.energy_source
+        if src is None or not self.cfg.get(CONF_INDOOR_TEMPS):
+            return None
+        field = "kwh" if src == "power" else "gas"
+        factor = 1.0 if src == "power" else self._gas_kwh_factor() or 0.0
+        days = [
+            {"kwh": d[field] * factor, "indoor": d.get("indoor"), "outdoor": d["outdoor"]}
+            for d in self._complete_days(30)
+            if self._measured(d, field)
+        ]
+        res = cmf.heat_loss(days)
+        if res is not None:
+            res["source"] = src
+        return res
+
+    # ------------------------------------------------------------- curve advice
+    def curve_advice(self) -> dict[str, Any] | None:
+        """Flow temperatures that would keep the rooms at the thermostat setting."""
+        if not (self.cfg.get(CONF_FLOW_TEMP) and self.cfg.get(CONF_THERMOSTAT)):
+            return None
+        pts = []
+        for p in self.comfort_points():  # [out, gap, duty, short, ts, indoor, setpoint]
+            v = self.hours.get(p[4])
+            if not v or not v.get("fl_n"):
+                continue
+            pts.append(
+                {
+                    "out": p[0],
+                    "room": p[5],
+                    "sp": p[6],
+                    "duty": p[2],
+                    "flow": v["fl_sum"] / v["fl_n"],
+                    "dt": v["dt_sum"] / v["dt_n"] if v.get("dt_n") else None,
+                    "now": v["tgt_sum"] / v["tgt_n"] if v.get("tgt_n") else None,
+                }
+            )
+        return cmf.curve_advice(pts)
 
     def earliest_ts(self) -> float | None:
         cands = []
@@ -1573,6 +1638,8 @@ class BoilerMonitor:
             a = agg.setdefault(d, {**_new_bucket(), "ok_n": 0})
             for f in _new_bucket():
                 a[f] += v.get(f, 0)
+            a["in_sum"] = a.get("in_sum", 0) + v.get("in_sum", 0)
+            a["in_n"] = a.get("in_n", 0) + v.get("in_n", 0)
             if not _na_hour(v):
                 a["ok_n"] += v.get("out_n", 0)
         out = []
@@ -1589,6 +1656,7 @@ class BoilerMonitor:
                     "cycles": int(a["cycles"]),
                     "short": int(a["short"]),
                     "outdoor": _r(a["out_sum"] / a["out_n"]) if a["out_n"] else None,
+                    "indoor": _r(a["in_sum"] / a["in_n"], 2) if a.get("in_n") else None,
                     "cond_pct": _r(100 * a["cond_s"] / a["smp_s"]) if a["smp_s"] >= 300 else None,
                     "delta_t": _r(a["dt_sum"] / a["dt_n"]) if a["dt_n"] else None,
                     "samples": int(a["out_n"]),

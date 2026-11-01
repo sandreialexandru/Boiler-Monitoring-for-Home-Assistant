@@ -272,6 +272,15 @@
       },
       "gas_per_hdd": {
         "name": "Gaz pe grad-zi (7z)"
+      },
+      "heat_loss": {
+        "name": "Pierdere de căldură"
+      },
+      "recommended_flow_at_0": {
+        "name": "Tur recomandat la 0 °C"
+      },
+      "recommended_curve_slope": {
+        "name": "Pantă recomandată a curbei"
       }
     },
     "binary_sensor": {

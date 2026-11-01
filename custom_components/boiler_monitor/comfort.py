@@ -258,3 +258,120 @@ def preheat_minutes(
         return 0.0
     rate = heatup_rate(model, outdoor)
     return None if rate is None else round((target - indoor) * rate)
+
+
+# --- curve advice -------------------------------------------------------------
+# What flow temperature would keep the rooms exactly at the thermostat setting
+# with the burner running most of the time (the point of weather compensation)?
+#
+# Per steady hour, radiator output ~ duty * (water - room)^n, and it equals the
+# losses ~ (room - outdoor). With the room at the setpoint and the burner on for
+# ADVICE_DUTY of the hour, the water would need to be
+#     E_need = E * ((duty / ADVICE_DUTY) * (setpoint - out) / (room - out))^(1/n)
+# above the setpoint, where E = mean water - room in that hour. Fitting the
+# needed flow over the outdoor temperature gives the recommended curve.
+RADIATOR_N = 1.3
+ADVICE_DUTY = 0.9  # leave the thermostat a little room to switch
+ADVICE_MIN_DUTY = 0.15  # the burner must have run in the hour to know the water temperature
+ADVICE_MIN_HOURS = 12
+ADVICE_MIN_SPREAD = 4.0  # °C of outdoor range needed to change the slope as well
+ADVICE_MIN_DIFF = 3.0  # °C room-outdoor / water-room below which the ratio is noise
+
+
+def curve_advice(points: list[dict[str, float]]) -> dict[str, Any] | None:
+    """points: dicts with out, room, sp, duty, flow (actual, while burning),
+    dt (flow-return, may be None) and now (current flow target, may be None)."""
+    need: list[tuple[float, float]] = []
+    now: list[tuple[float, float]] = []
+    for p in points:
+        out, room, sp, duty, flow = p["out"], p["room"], p["sp"], p["duty"], p["flow"]
+        if duty < ADVICE_MIN_DUTY or flow is None:
+            continue
+        half = (p.get("dt") or 0.0) / 2
+        e = flow - half - room
+        if e < ADVICE_MIN_DIFF or room - out < ADVICE_MIN_DIFF or sp - out < ADVICE_MIN_DIFF:
+            continue
+        factor = (min(duty, 1.0) / ADVICE_DUTY) * (sp - out) / (room - out)
+        factor = min(max(factor, 0.3), 3.0)
+        need.append((out, sp + e * factor ** (1 / RADIATOR_N) + half))
+        now.append((out, p["now"] if p.get("now") is not None else flow))
+    if len(need) < ADVICE_MIN_HOURS:
+        return None
+    outs = [p[0] for p in need]
+    spread = _quantile(outs, 0.9) - _quantile(outs, 0.1)
+    fit_now = linfit(now)
+    fit_need = linfit(need)
+    mean_out = sum(outs) / len(outs)
+    slope_known = spread >= ADVICE_MIN_SPREAD and fit_now is not None and fit_need is not None
+    if not slope_known:
+        # too little weather spread for a slope: keep the current one, shift the level
+        b_now = fit_now["b"] if fit_now and spread >= ADVICE_MIN_SPREAD else 0.0
+        a_now = sum(p[1] for p in now) / len(now) - b_now * mean_out
+        shift = sum(n[1] - (a_now + b_now * n[0]) for n in need) / len(need)
+        fit_now = {"a": a_now, "b": b_now}
+        fit_need = {"a": a_now + shift, "b": b_now}
+
+    def line(fit: dict[str, float]) -> dict[str, float]:
+        return {
+            "slope": round(-fit["b"], 2),
+            "at_0": round(fit["a"], 1),
+            "at_minus_10": round(fit["a"] - 10 * fit["b"], 1),
+            "at_mean": round(fit["a"] + fit["b"] * mean_out, 1),
+        }
+
+    cur, rec = line(fit_now), line(fit_need)
+    slope_factor = (
+        round(fit_need["b"] / fit_now["b"], 2) if slope_known and fit_now["b"] < -0.05 else None
+    )
+    return {
+        "n": len(need),
+        "spread": round(spread, 1),
+        "mean_outdoor": round(mean_out, 1),
+        "slope_known": slope_known,
+        "now": cur,
+        "recommended": rec,
+        "delta_at_0": round(rec["at_0"] - cur["at_0"], 1),
+        "delta_at_mean": round(rec["at_mean"] - cur["at_mean"], 1),
+        "slope_factor": slope_factor,
+        "confidence": "high" if len(need) >= 72 and spread >= 8 else "medium" if len(need) >= 36 else "low",
+    }
+
+
+# --- heat loss ----------------------------------------------------------------
+HEATLOSS_MIN_DIFF = 3.0  # °C indoor-outdoor for a day to count
+HEATLOSS_FIT_MIN_DAYS = 5
+HEATLOSS_FIT_MIN_R2 = 0.5
+
+
+def heat_loss(days: list[dict[str, float]], recent: int = 7) -> dict[str, Any] | None:
+    """days: dicts with kwh (heat delivered that day), indoor, outdoor (averages).
+
+    W per °C of indoor-outdoor difference: total heat / total (24 h x difference)
+    over the last `recent` days. That includes free heat (people, appliances,
+    sun); a fit over all days separates the two when the data allows it.
+    """
+    pts = [
+        (d["indoor"] - d["outdoor"], d["kwh"])
+        for d in days
+        if d.get("indoor") is not None
+        and d.get("outdoor") is not None
+        and d["indoor"] - d["outdoor"] >= HEATLOSS_MIN_DIFF
+    ]
+    if not pts:
+        return None
+    last = pts[-recent:]
+    kh = sum(24 * p[0] for p in last)
+    res: dict[str, Any] = {
+        "w_per_k": round(1000 * sum(p[1] for p in last) / kh) if kh else None,
+        "days": len(last),
+        "avg_diff": round(sum(p[0] for p in last) / len(last), 1),
+        "kwh_per_day": round(sum(p[1] for p in last) / len(last), 1),
+    }
+    fit = linfit(pts) if len(pts) >= HEATLOSS_FIT_MIN_DAYS else None
+    if fit and fit["b"] > 0 and fit["r2"] >= HEATLOSS_FIT_MIN_R2:
+        # kWh/day = 24*H*diff - 24*gains  ->  H = b/24, gains = -a/24
+        res["fit_w_per_k"] = round(1000 * fit["b"] / 24)
+        res["free_gains_w"] = round(max(0.0, -1000 * fit["a"] / 24))
+        res["fit_r2"] = round(fit["r2"], 2)
+        res["fit_days"] = fit["n"]
+    return res

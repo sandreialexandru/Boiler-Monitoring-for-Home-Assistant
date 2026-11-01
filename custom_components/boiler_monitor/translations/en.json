@@ -272,6 +272,15 @@
       },
       "gas_per_hdd": {
         "name": "Gas per degree-day (7d)"
+      },
+      "heat_loss": {
+        "name": "Heat loss"
+      },
+      "recommended_flow_at_0": {
+        "name": "Recommended flow at 0 °C"
+      },
+      "recommended_curve_slope": {
+        "name": "Recommended curve slope"
       }
     },
     "binary_sensor": {

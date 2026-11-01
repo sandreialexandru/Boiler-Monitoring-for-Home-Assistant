@@ -31,6 +31,7 @@ from .const import (
     CONF_THERMOSTAT,
     CONF_WEATHER,
     DOMAIN,
+    HAS_ENERGY,
     HAS_OUTDOOR,
     MODE_CURVE,
     MODE_FIXED,
@@ -73,6 +74,9 @@ SENSORS: tuple[BoilerSensorDescription, ...] = (
     BoilerSensorDescription(key="boiler_starts_per_hour", stat="boiler_starts_per_hour", translation_key="boiler_starts_per_hour", icon="mdi:repeat", state_class=M, native_unit_of_measurement="starts/h", suggested_display_precision=1),
     BoilerSensorDescription(key="gas_today", stat="gas_today", translation_key="gas_today", icon="mdi:meter-gas", state_class=SensorStateClass.TOTAL_INCREASING, suggested_display_precision=2),
     BoilerSensorDescription(key="gas_per_hdd", stat="gas_per_hdd", translation_key="gas_per_hdd", icon="mdi:chart-line", state_class=M, suggested_display_precision=3),
+    BoilerSensorDescription(key="heat_loss", stat="heat_loss_w_per_k", translation_key="heat_loss", icon="mdi:home-export-outline", state_class=M, native_unit_of_measurement="W/°C", suggested_display_precision=0),
+    BoilerSensorDescription(key="recommended_flow_at_0", stat="recommended_flow_at_0", translation_key="recommended_flow_at_0", icon="mdi:chart-bell-curve-cumulative", device_class=SensorDeviceClass.TEMPERATURE, state_class=M, native_unit_of_measurement=UnitOfTemperature.CELSIUS, suggested_display_precision=0),
+    BoilerSensorDescription(key="recommended_curve_slope", stat="recommended_curve_slope", translation_key="recommended_curve_slope", icon="mdi:chart-line-variant", state_class=M, native_unit_of_measurement="°C/°C", suggested_display_precision=2),
     BoilerSensorDescription(key="flame_share", stat="flame_share", translation_key="flame_share", icon="mdi:fire-alert", state_class=M, native_unit_of_measurement=PERCENTAGE, suggested_display_precision=0),
     BoilerSensorDescription(key="starts_per_demand_hour", stat="starts_per_demand_hour", translation_key="starts_per_demand_hour", icon="mdi:fire-circle", state_class=M, native_unit_of_measurement="starts/h", suggested_display_precision=1),
     BoilerSensorDescription(key="condensing_ratio", stat="condensing_ratio", translation_key="condensing_ratio", icon="mdi:water-percent", state_class=M, native_unit_of_measurement=PERCENTAGE, suggested_display_precision=0),
@@ -111,6 +115,9 @@ REQUIRES: dict[str, tuple[str, ...]] = {
     "boiler_starts_per_hour": (CONF_STARTS,),
     "gas_today": (CONF_GAS,),
     "gas_per_hdd": (CONF_GAS, HAS_OUTDOOR),
+    "heat_loss": (CONF_INDOOR_TEMPS, HAS_OUTDOOR, HAS_ENERGY),
+    "recommended_flow_at_0": (CONF_FLOW_TEMP, CONF_THERMOSTAT, HAS_OUTDOOR),
+    "recommended_curve_slope": (CONF_FLOW_TEMP, CONF_THERMOSTAT, HAS_OUTDOOR),
     "demand_time_today": (CONF_FLAME,),
     "flame_share": (CONF_FLAME,),
     "starts_per_demand_hour": (CONF_FLAME,),
@@ -137,7 +144,11 @@ async def async_setup_entry(hass: HomeAssistant, entry, async_add_entities: AddE
     cfg = monitor.cfg
     ents: list[SensorEntity] = [BoilerStatusSensor(monitor, STATUS_DESC)]
     def has(key: str) -> bool:
-        return monitor.has_outdoor if key == HAS_OUTDOOR else bool(cfg.get(key))
+        if key == HAS_OUTDOOR:
+            return monitor.has_outdoor
+        if key == HAS_ENERGY:
+            return monitor.has_power or bool(cfg.get(CONF_GAS))
+        return bool(cfg.get(key))
 
     for d in SENSORS:
         if all(has(k) for k in REQUIRES.get(d.key, ())) and (
@@ -187,7 +198,7 @@ class BoilerStatusSensor(BoilerEntity, SensorEntity):
     """Main entity: status + everything the card needs as attributes."""
 
     _unrecorded_attributes = frozenset(
-        {"timeline", "demand_timeline", "source_units", "daily", "regression", "entities", "stats", "thresholds", "curve_points", "curve_fit", "comfort_points", "comfort", "heatups", "heatup_model"}
+        {"timeline", "demand_timeline", "source_units", "daily", "regression", "entities", "stats", "thresholds", "curve_points", "curve_fit", "comfort_points", "comfort", "heatups", "heatup_model", "heat_loss", "curve_advice"}
     )
 
     @property
@@ -258,5 +269,7 @@ class BoilerStatusSensor(BoilerEntity, SensorEntity):
             "thermostat_setpoint": m.thermostat_setpoint(),
             "curve_points": m.curve_points() if cfg.get(CONF_FLOW_SETPOINT) else [],
             "curve_fit": m.curve_fit() if cfg.get(CONF_FLOW_SETPOINT) else None,
+            "heat_loss": m.heat_loss_data,
+            "curve_advice": m.curve_advice_data,
             "entities": entities,
         }

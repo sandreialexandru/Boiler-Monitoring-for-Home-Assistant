@@ -59,6 +59,8 @@ It works with any boiler. It needs three things: an entity that tells it when th
 | ⏱️ **Warm-up time & pre-heat** | learns how many minutes the house needs per °C at each outdoor temperature, and when heating must start to reach a temperature at a given time (with the weather forecast) |
 | 🏠 **Heating effect** | measures how much the rooms actually warmed after the burner started (°C/h) and alerts when the boiler burns without effect |
 | 📈 **Outdoor correlation** | daily burn hours vs outdoor temperature, linear regression, **balance point**, **burn hours per degree-day** |
+| 🏠 **Heat loss** | how many watts the home loses per °C of indoor–outdoor difference, plus an estimate of the free heat (people, appliances, sun). Independent of the weather, so it shows the effect of balancing, insulation or the neighbours heating |
+| 📐 **Recommended curve** | the flow temperatures that would keep the rooms exactly at the thermostat setting with the burner running most of the time: flow at 0 °C and −10 °C, and the slope factor to set on the boiler |
 | ❄️ **Season gating** | optionally pauses all monitoring outside the heating season, so domestic-hot-water starts in summer don't count |
 | 🔔 **Alerts** | problem binary sensors, HA events, optional push notifications (tagged, max 1/hour per type) |
 | 🗒️ **CSV log** | every START / STOP / SHORT_CYCLE / RETURN_HOT / INEFFECTIVE event, ready for Excel |
@@ -107,7 +109,7 @@ The card is registered automatically, so you don't need to add a dashboard resou
 | Modulation sensor | – | Burner modulation in % (e.g. OpenTherm *relative modulation level*) |
 | Maximum / minimum heating power | – | kW from the data plate (e.g. 24 / 3.5). With modulation: heat power and energy in kWh |
 | Burner-starts counter | – | The boiler's own count of burner starts. More accurate than counting the relay |
-| Gas meter | – | A total-increasing meter in m³ or kWh. A reset of the meter is ignored |
+| Gas meter | – | A total-increasing meter in m³ or kWh. A reset of the meter is ignored. Ariston NET users can pick *central heating total energy consumption* (kWh, heating only) |
 | Heating-season entity / state | – | e.g. `input_boolean.heating_season` = `on`, `climate.x` = `heat`, or an `input_select` option. Leave it empty to monitor all year |
 
 The form refuses to save without the required fields. Entries created with an older version keep working; ⋮ → **Reconfigure** asks for the missing ones the next time you open it.
@@ -130,6 +132,9 @@ Leave a sensor empty and the reports that depend on it are not created at all �
 | Modulation + max power | heat power, heat energy today, energy per degree-day; the balance point is fitted on **kWh** instead of burn hours | *Energy* group, *Energy vs outdoor* chart, kWh in the day tooltips |
 | Burner-starts counter | boiler starts today, boiler starts per demand hour | *Ignitions* pill uses the boiler's own count |
 | Gas meter | gas today, gas per degree-day (unit follows the meter) | *Gas* group, gas in the day tooltips |
+
+| Flow + thermostat (+ outdoor) | recommended flow at 0 °C, recommended curve slope | *Recommended curve* on the Curve tab (or on Comfort without a setpoint sensor) |
+| Indoor + outdoor + energy (modulation + max power, or gas meter) | heat loss (W/°C) | *Heat loss* on the History tab |
 
 Days recorded before an energy or gas source was added are left out of the kWh/gas averages, so adding one later does not skew them.
 
@@ -211,6 +216,9 @@ All entities belong to one device named after your integration. The examples use
 | `sensor.centrala_heat_energy_per_degree_day_7d` | kWh/°C·day | *(needs modulation + max power + outdoor)* |
 | `sensor.centrala_boiler_starts_today` · `_boiler_starts_per_demand_hour` | starts | From the boiler's counter *(needs starts counter)* |
 | `sensor.centrala_gas_today` · `_gas_per_degree_day_7d` | m³ (meter unit) | *(needs gas meter; per degree-day also outdoor)* |
+| `sensor.centrala_heat_loss` | W/°C | Heat delivered ÷ (24 h × indoor−outdoor) over the last 7 full days. It includes the free heat, so the attributes on the status sensor also give a fitted value over 30 days and the free heat in W. Gas in m³ is counted at 10.55 kWh/m³ *(needs indoor, outdoor and modulation + max power or a gas meter)* |
+| `sensor.centrala_recommended_flow_at_0_degc` · `_recommended_curve_slope` | °C · °C/°C | The flow at 0 °C outside, and the slope, that would hold the thermostat setting with the burner on ~90 % of the time. Compare with *Heating curve slope* and the boiler's flow target. The slope is given only once the outdoor range is wide enough (≥ 4 °C) *(needs flow, thermostat, outdoor)* |
+
 
 ### Binary sensors
 
@@ -682,3 +690,12 @@ The card is plain JavaScript (no build step) in `custom_components/boiler_monito
 ## License
 
 MIT
+
+### How the curve is recommended
+
+For every steady hour (thermostat setting unchanged) in which the burner ran at least 15 % of the time, radiator output is taken as *duty × (water − room)^1.3* and the losses as proportional to *room − outdoor*. From that the integration works out how warm the water would have to be for the room to sit exactly at the setting with the burner on 90 % of the hour, and fits a line through those flow temperatures over the outdoor temperature.
+
+- Rooms below the setting while the burner runs flat out → the recommended flow is higher.
+- Rooms at the setting while the burner runs only part of the hour → the recommended flow is lower: the boiler would run longer at a lower temperature, which is what weather compensation is for.
+
+On the boiler, change the slope by the factor shown, then the offset until its flow target at the current outdoor temperature matches the recommended line. Re-check after a few days.

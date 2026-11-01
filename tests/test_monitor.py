@@ -1267,3 +1267,75 @@ async def test_heating_rate_restored_from_old_store(hass: HomeAssistant, freezer
     m.last_heating_rate = None
     m._restore_effect(None)
     assert m.last_heating_rate == pytest.approx(0.6)  # 0.45 °C over the 45 min check
+
+
+async def test_curve_advice_raises_a_curve_that_is_too_low(hass: HomeAssistant, freezer):
+    """Burner on all the time, rooms below the setting: the flow should be higher."""
+    freezer.move_to("2026-11-10 00:00:30+02:00")
+    thermostat(hass, target=21.0)
+    temps(hass)
+    await burner(hass, False)
+    await setup(hass, THERMO, {**OPTIONS, "notify_service": ""})
+    for h in range(30):
+        out = [10, 6, 2, -2, -6][(h // 6) % 5]
+        flow_t = 45 - 0.8 * out            # boiler curve, too flat and too low
+        room = 21.0 - 0.1 * (10 - out)     # the colder, the further below 21
+        temps(hass, flow=flow_t, ret=flow_t - 10, out=out, liv=room, dor=room)
+        await burner(hass, True)
+        await advance(hass, freezer, 60)
+    attrs = st(hass, "sensor.centrala_status").attributes
+    adv = attrs["curve_advice"]
+    assert adv is not None and adv["n"] >= 12
+    assert adv["delta_at_0"] > 0
+    assert adv["recommended"]["slope"] > adv["now"]["slope"]
+    assert float(st(hass, "sensor.centrala_recommended_flow_at_0_degc").state) == pytest.approx(
+        adv["recommended"]["at_0"], abs=0.5
+    )
+    assert st(hass, "sensor.centrala_recommended_curve_slope").state not in ("unknown", "unavailable")
+
+
+async def test_curve_advice_lowers_flow_when_burner_cycles(hass: HomeAssistant, freezer):
+    """Rooms at the setting with the burner on 30 % of the time: the flow can be lower."""
+    freezer.move_to("2026-11-10 00:00:30+02:00")
+    thermostat(hass, target=21.0)
+    temps(hass)
+    await burner(hass, False)
+    await setup(hass, THERMO, {**OPTIONS, "notify_service": ""})
+    for h in range(20):
+        out = [10, 6, 2, -2][(h // 5) % 4]
+        temps(hass, flow=55, ret=45, out=out, liv=21.0, dor=21.0)
+        for _ in range(3):
+            await burner(hass, True)
+            await advance(hass, freezer, 6)
+            await burner(hass, False)
+            await advance(hass, freezer, 14)
+    adv = st(hass, "sensor.centrala_status").attributes["curve_advice"]
+    assert adv is not None
+    assert adv["delta_at_mean"] < -5
+
+
+async def test_heat_loss_from_gas_meter_in_kwh(hass: HomeAssistant, freezer):
+    """150 W/°C house, 300 W free heat; gas meter counts kWh."""
+    freezer.move_to("2026-11-10 00:00:30+02:00")
+    hass.states.async_set(GAS, 1000.0, {"unit_of_measurement": "kWh"})
+    temps(hass)
+    await burner(hass, False)
+    await setup(hass, {**DATA, "gas_entity": GAS}, {**OPTIONS, "notify_service": ""})
+    gas = 1000.0
+    for out in [0, 8, 4, 12, 2, 6]:
+        temps(hass, out=out, liv=21.0, dor=21.0)
+        per_hour = (0.150 * (21 - out) - 0.300)  # kWh per hour
+        for _h in range(24):
+            await burner(hass, True)
+            await advance(hass, freezer, 20)
+            gas += per_hour
+            hass.states.async_set(GAS, round(gas, 3), {"unit_of_measurement": "kWh"})
+            await burner(hass, False)
+            await advance(hass, freezer, 40)
+    attrs = st(hass, "sensor.centrala_status").attributes
+    hl = attrs["heat_loss"]
+    assert hl["source"] == "gas"
+    assert hl["fit_w_per_k"] == pytest.approx(150, abs=5)
+    assert hl["free_gains_w"] == pytest.approx(300, abs=40)
+    # the simple ratio includes the free heat, so it is a little lower
+    assert 120 < float(st(hass, "sensor.centrala_heat_loss").state) < 150

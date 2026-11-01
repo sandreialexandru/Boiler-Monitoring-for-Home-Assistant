@@ -13,7 +13,7 @@
  *   show_comfort: true    # comfort vs outdoor + tuning verdict (needs a thermostat)
  *   show_heatup: true     # how fast the house warms up + pre-heat time
  */
-const CARD_VERSION = "1.9.1";
+const CARD_VERSION = "1.10.0";
 
 const I18N = {
   en: {
@@ -21,6 +21,16 @@ const I18N = {
     g_energy: "Energy", g_gas: "Gas", power_now: "Power now", energy_today: "Energy today", mod_avg: "Avg modulation", mod_low: "At minimum",
     gas_today: "Gas today", gas_hdd: "Gas / degree-day", starts_today: "Boiler starts", tt_kwh: "Energy", tt_gas: "Gas", tt_starts: "Boiler starts",
     corr_kwh: "Energy vs outdoor", kwh_hdd: "kWh per degree-day",
+    hl_title: "Heat loss", hl_val: "per °C indoor–outdoor ({d} days)", hl_gains: "free heat ≈ {w} W (people, appliances, sun)",
+    hl_fit: "fitted: {w} W/°C", hl_note: "Lower is better. Compare before and after a change (balancing, insulation, neighbours heating).",
+    hl_none: "Needs a few full days with heat in kWh (modulation + power, or a gas meter)",
+    adv_title: "Recommended curve", leg_rec: "recommended",
+    adv_up: "To hold {sp} °C with the burner running most of the time, the flow should be {d} °C higher", adv_down: "The rooms would stay at {sp} °C with the flow {d} °C lower, and the boiler would run longer at a lower temperature",
+    adv_ok: "The curve fits: the flow is within 1 °C of what the rooms need",
+    adv_row: "at 0 °C: {now} → {rec} °C · at −10 °C: {nowm} → {recm} °C",
+    adv_slope: "slope {now} → {rec} (×{f})", adv_level: "Outdoor range still narrow: only the level is advised, keep the slope",
+    adv_how: "On the boiler: change the slope by the factor above, then the offset until the flow target matches the recommended value.",
+    adv_none: "Needs at least 12 hours with the burner running and the thermostat steady",
     demand_today: "Demand today", flame_share: "Flame / demand", starts_dh: "Ignitions / demand h",
     tt_demand: "Heat demand", tt_inferred: "seen from the flow jump (flame sensor missed it)", tt_flame: "Flame",
     tab_now: "Now", tab_history: "History", tab_curve: "Curve", tab_comfort: "Comfort",
@@ -75,6 +85,16 @@ comfort_title: "Comfort vs outdoor", heat_title: "Warming up the house",
     g_energy: "Energie", g_gas: "Gaz", power_now: "Putere acum", energy_today: "Energie azi", mod_avg: "Modulație medie", mod_low: "La minim",
     gas_today: "Gaz azi", gas_hdd: "Gaz / grad-zi", starts_today: "Porniri centrală", tt_kwh: "Energie", tt_gas: "Gaz", tt_starts: "Porniri centrală",
     corr_kwh: "Energie vs exterior", kwh_hdd: "kWh pe grad-zi",
+    hl_title: "Pierdere de căldură", hl_val: "pe °C interior–exterior ({d} zile)", hl_gains: "căldură gratuită ≈ {w} W (oameni, aparate, soare)",
+    hl_fit: "din regresie: {w} W/°C", hl_note: "Mai mic e mai bine. Compară înainte și după o schimbare (echilibrare, izolare, vecinii cu căldură).",
+    hl_none: "Necesită câteva zile complete cu căldura în kWh (modulație + putere sau contor de gaz)",
+    adv_title: "Curbă recomandată", leg_rec: "recomandat",
+    adv_up: "Ca să ții {sp} °C cu centrala mergând aproape continuu, turul ar trebui să fie cu {d} °C mai mare", adv_down: "Camerele ar rămâne la {sp} °C și cu turul cu {d} °C mai mic, iar centrala ar merge mai mult la temperatură mai joasă",
+    adv_ok: "Curba e potrivită: turul e la sub 1 °C de ce au nevoie camerele",
+    adv_row: "la 0 °C: {now} → {rec} °C · la −10 °C: {nowm} → {recm} °C",
+    adv_slope: "panta {now} → {rec} (×{f})", adv_level: "Interval de temperaturi exterioare încă îngust: doar nivelul e recomandat, păstrează panta",
+    adv_how: "Pe centrală: schimbă panta cu factorul de mai sus, apoi decalarea până când turul cerut ajunge la valoarea recomandată.",
+    adv_none: "Necesită cel puțin 12 ore cu centrala în funcțiune și termostatul stabil",
     demand_today: "Cerere azi", flame_share: "Flacără / cerere", starts_dh: "Aprinderi / h cerere",
     tt_demand: "Cerere de căldură", tt_inferred: "văzută din saltul turului (senzorul de flacără a ratat-o)", tt_flame: "Flacără",
     tab_now: "Acum", tab_history: "Istoric", tab_curve: "Curbă", tab_comfort: "Confort",
@@ -647,10 +667,13 @@ class BoilerMonitorCard extends HTMLElement {
       { id: "history", label: t.tab_history, html: [
         cfg.show_daily ? this._daily(a) : "",
         cfg.show_correlation && a.sources?.outdoor ? this._corr(a) : "",
+        this._heatLoss(a),
       ].join("") },
       { id: "curve", label: t.tab_curve, html: cfg.show_curve && a.sources?.setpoint && a.sources?.outdoor ? this._curve(a) : "" },
       { id: "comfort", label: t.tab_comfort, html: [
         cfg.show_comfort && a.sources?.thermostat && a.sources?.outdoor ? this._comfort(a) : "",
+        // without a setpoint sensor there is no curve tab: advise here
+        a.sources?.outdoor && !(cfg.show_curve && a.sources?.setpoint) ? this._advice(a) : "",
         cfg.show_heatup && (a.sources?.thermostat || a.room != null) ? this._heatup(a) : "",
       ].join("") },
     ].filter((x) => x.html);
@@ -947,6 +970,8 @@ class BoilerMonitorCard extends HTMLElement {
     if (a.flow_target != null) ys.push(a.flow_target);
     const fit = a.curve_fit;
     if (!fixed && fit) ys.push(fit.intercept + fit.raw_slope * xmin, fit.intercept + fit.raw_slope * xmax);
+    const rec = a.curve_advice?.recommended;
+    if (rec) ys.push(rec.at_0 - rec.slope * xmin, rec.at_0 - rec.slope * xmax);
     let ymin = Math.floor((Math.min(...ys) - 3) / 5) * 5, ymax = Math.ceil((Math.max(...ys) + 3) / 5) * 5;
     if (ymax - ymin < 15) ymax = ymin + 15;
 
@@ -967,11 +992,16 @@ class BoilerMonitorCard extends HTMLElement {
     ];
     const layers = (X, Y, d) => {
       if (fixed && a.flow_target != null) return `<line x1="${X(d.x0)}" x2="${X(d.x1)}" y1="${Y(a.flow_target)}" y2="${Y(a.flow_target)}" class="reg"/>`;
+      let out = "";
       if (!fixed && fit) {
         const f = (x) => fit.intercept + fit.raw_slope * x;
-        return `<line x1="${X(d.x0)}" y1="${Y(f(d.x0))}" x2="${X(d.x1)}" y2="${Y(f(d.x1))}" class="reg"/>`;
+        out += `<line x1="${X(d.x0)}" y1="${Y(f(d.x0))}" x2="${X(d.x1)}" y2="${Y(f(d.x1))}" class="reg"/>`;
       }
-      return "";
+      if (rec) {
+        const g = (x) => rec.at_0 - rec.slope * x;
+        out += `<line x1="${X(d.x0)}" y1="${Y(g(d.x0))}" x2="${X(d.x1)}" y2="${Y(g(d.x1))}" class="rec"/>`;
+      }
+      return out;
     };
     const plot = this._plot("curve", {
       full: { x0: xmin, x1: xmax, y0: ymin, y1: ymax }, H: 160,
@@ -989,9 +1019,47 @@ class BoilerMonitorCard extends HTMLElement {
       const d = s.flow_deviation;
       parts.push(`<span data-ent="${esc(a.entities?.flow_deviation || "")}" class="${Math.abs(d) > 5 ? "warnt" : ""}"><b>${d > 0 ? "+" : ""}${fmt(d, 1)} °C</b> ${esc(t.dev24)}</span>`);
     }
-    const legend = `<div class="legend">${fixed ? `<span><i class="lline"></i>${esc(t.fixed_at)}</span>` : `<span><i class="ldot"></i>${esc(t.leg_target)}</span>`}<span><i class="lhdot"></i>${esc(t.leg_actual)}</span></div>`;
+    const legend = `<div class="legend">${fixed ? `<span><i class="lline"></i>${esc(t.fixed_at)}</span>` : `<span><i class="ldot"></i>${esc(t.leg_target)}</span>`}<span><i class="lhdot"></i>${esc(t.leg_actual)}</span>${rec ? `<span><i class="lrec"></i>${esc(t.leg_rec)}</span>` : ""}</div>`;
     const note = !fixed && !fit ? `<div class="muted small">${esc(t.need_curve)}</div>` : "";
-    return `${title}${plot}${legend}${note}<div class="cfoot">${parts.join("")}</div>`;
+    return `${title}${plot}${legend}${note}<div class="cfoot">${parts.join("")}</div>${this._advice(a)}`;
+  }
+
+  // What the flow should be so the rooms stay at the thermostat setting.
+  _advice(a) {
+    if (!a.sources?.thermostat || !a.sources?.flow) return "";
+    const t = this._t;
+    const c = a.curve_advice;
+    const head = `<div class="sec">${esc(t.adv_title)}</div>`;
+    if (!c) return `${head}<div class="muted small">${esc(t.adv_none)}</div>`;
+    const sp = a.thermostat_setpoint != null ? fmt(a.thermostat_setpoint, 1) : "–";
+    const d = c.delta_at_mean;
+    const tone = Math.abs(d) < 1 ? "good" : d > 0 ? "cold" : "warm";
+    const icon = { good: "mdi:check-circle", cold: "mdi:thermometer-chevron-up", warm: "mdi:thermometer-chevron-down" }[tone];
+    const msg = tone === "good" ? t.adv_ok : (d > 0 ? t.adv_up : t.adv_down).replace("{sp}", sp).replace("{d}", fmt(Math.abs(d), 0));
+    const row = t.adv_row.replace("{now}", fmt(c.now.at_0, 0)).replace("{rec}", fmt(c.recommended.at_0, 0))
+      .replace("{nowm}", fmt(c.now.at_minus_10, 0)).replace("{recm}", fmt(c.recommended.at_minus_10, 0));
+    const facts = [`<span data-ent="${esc(a.entities?.recommended_flow_at_0 || "")}">${esc(row)}</span>`];
+    if (c.slope_known && c.slope_factor != null) {
+      facts.push(`<span data-ent="${esc(a.entities?.recommended_curve_slope || "")}">${esc(t.adv_slope.replace("{now}", fmt(c.now.slope, 2)).replace("{rec}", fmt(c.recommended.slope, 2)).replace("{f}", fmt(c.slope_factor, 2)))}</span>`);
+    } else if (!c.slope_known) {
+      facts.push(`<span class="muted">${esc(t.adv_level)}</span>`);
+    }
+    facts.push(`<span class="muted">${esc(t[`conf_${c.confidence}`] || c.confidence)} · n=${c.n}</span>`);
+    const how = tone === "good" ? "" : `<div class="vtext muted small">${esc(t.adv_how)}</div>`;
+    return `${head}<div class="verdict ${tone}"><ha-icon icon="${icon}"></ha-icon><div><b>${esc(msg)}</b><div class="vfacts">${facts.join("")}</div>${how}</div></div>`;
+  }
+
+  // House heat loss in W per °C of indoor-outdoor difference.
+  _heatLoss(a) {
+    if (!a.entities?.heat_loss) return "";
+    const t = this._t;
+    const h = a.heat_loss;
+    const head = `<div class="sec">${esc(t.hl_title)}</div>`;
+    if (!h || h.w_per_k == null) return `${head}<div class="muted small">${esc(t.hl_none)}</div>`;
+    const parts = [`<span data-ent="${esc(a.entities.heat_loss)}"><b>${fmt(h.w_per_k, 0)} W/°C</b> ${esc(t.hl_val.replace("{d}", h.days))}</span>`];
+    if (h.fit_w_per_k != null) parts.push(`<span class="muted">${esc(t.hl_fit.replace("{w}", fmt(h.fit_w_per_k, 0)))}</span>`);
+    if (h.free_gains_w) parts.push(`<span class="muted">${esc(t.hl_gains.replace("{w}", fmt(h.free_gains_w, 0)))}</span>`);
+    return `${head}<div class="cfoot">${parts.join("")}</div><div class="muted small">${esc(t.hl_note)}</div>`;
   }
 
   // Comfort vs outdoor: how far the rooms are from the thermostat setting, per hour, vs outdoor temp.
@@ -1243,6 +1311,8 @@ const STYLE = `
   .ldot { width: 8px; height: 8px; border-radius: 50%; background: var(--bm-burn); display: inline-block; }
   .lhdot { width: 7px; height: 7px; border-radius: 50%; border: 1.6px solid var(--primary-color); display: inline-block; }
   .lline { width: 14px; border-top: 2px dashed var(--primary-color); display: inline-block; }
+  .rec { stroke: var(--bm-good); stroke-width: 2; stroke-dasharray: 2 3; }
+  .lrec { width: 14px; border-top: 2px dotted var(--bm-good); display: inline-block; }
   .mchip { font-size: 11px; font-weight: 400; padding: 1px 8px; border-radius: 10px; margin-left: 6px;
            background: var(--secondary-background-color); color: var(--secondary-text-color); }
   .mchip.curve { background: color-mix(in srgb, var(--bm-good) 16%, transparent); color: var(--bm-good); }

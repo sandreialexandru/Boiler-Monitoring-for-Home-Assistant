@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 DOMAIN = "boiler_monitor"
-VERSION = "1.9.1"
+VERSION = "1.10.0"
 
 # Config (entities) — set in config flow
 CONF_NAME = "name"
@@ -29,6 +29,7 @@ CONF_GAS = "gas_entity"  # gas meter (total increasing), m³ or kWh
 CONF_THERMOREG_STATE = "thermoregulation_on_state"
 # pseudo-key: an outdoor sensor OR a weather entity
 HAS_OUTDOOR = "_outdoor"
+HAS_ENERGY = "_energy"  # heat in kWh known: modulation + power, or a gas meter
 
 # Options (tuning) — editable later
 CONF_SHORT_CYCLE_MIN = "short_cycle_minutes"
